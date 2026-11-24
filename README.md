@@ -25,7 +25,7 @@ The repository brings together a working Windows Vulkan/D3D12 FG testbed, an API
 |---|---|---|
 | Direct NGX FG / D3D12 | Feature creation, Evaluate, readback and real/generated Present on RTX 2050 | Independent synthetic baseline |
 | Direct NGX FG / native Windows Vulkan | Working 2X in the sample's own animated 3D scene | External SM86 dependency + experimental Vulkan layer |
-| DLSS Super Resolution / Streamline | 120 successful Evaluate calls | SR-only Vulkan validation has open findings; combined SR + FG is unverified |
+| DLSS Super Resolution / Streamline | 120 successful Evaluate calls, Vulkan validation 0/0 on RTX 2050 | Combined SR + FG is unverified |
 | FrameInputs Phase 3 | 59 checks, baseline-identical control image, tested missing-depth fallback | Current GPU consumer is Vulkan-only, one command stream |
 | VSync / resize / FG toggle | Live Immediate↔FIFO, resize to 1920×1009, disable/re-enable; validation 0/0 | API Present counts are not physical scanout or latency |
 | Leonida integration | Pipeline audited, concrete integration plan written | Required game semantics and completion/lifetime seam still missing |

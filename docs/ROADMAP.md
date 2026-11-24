@@ -8,7 +8,7 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 | --- | --- | --- |
 | SDK-01 | P0 | Public C ABI, FG metadata validation and submission lifecycle first. Extract independently callable native FG and SR dispatch next. |
 | SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumer matrix. |
-| SR-01 | P0 | Establish a clean SR-only Vulkan validation baseline before extracting SR dispatch. |
+| SR-01 | P0 | SR-only passed Vulkan validation on the reference RTX 2050. Extract reusable SR dispatch from this profile. |
 | D3D-01 | P0 | Validate native resources and execute a synthetic D3D12 FrameInputs workload with real fence evidence. |
 | VK-01 | P1 | Real external producer waits and queue-family transfer tests. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
 | FFI-01 | P1 | Rust FFI with layout and installed-library lifecycle tests. |
@@ -35,7 +35,7 @@ Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding
 3. **Semantic provider:** identify final-compatible color/depth/MV/camera/jitter for a real frame with evidence. Unknown bindings remain unavailable.
 4. **Resource leases in Leonida:** pin actual resource/device/view owners, exact generations and completion tickets through all FG/presentation users.
 5. **Shared present seam:** integrate only after previous gates, preserve tracker rollback, lock order, deferred frames and Xbox/DXGI frame-token policy.
-6. **SR + FG on the synthetic scene:** first fix the [SR-only Vulkan validation findings](phase3/VALIDATION.en.md#configurable-runtime-rerun). Then verify SR-only, FG-only, and combined SR → FG separately. Define the color resolution, depth and MV resolution, jitter, motion-vector scaling, and reset rules at the boundary. Require generated-frame readback, validation and ordinary Present fallback. The current direct Vulkan consumer requires equal render and output extents.
+6. **SR + FG on the synthetic scene:** use the [verified SR-only baseline](evidence/sr-only-rtx2050.md) to compare SR-only, FG-only, and combined SR → FG separately. Define the color resolution, depth and MV resolution, jitter, motion-vector scaling, and reset rules at the boundary. Require generated-frame readback, validation and ordinary Present fallback. The current direct Vulkan consumer requires equal render and output extents.
 7. **Image quality and pacing:** camera cuts, occlusion, rapid motion, resize/memory pressure, scanout and latency measurement.
 
 See the detailed [integration plan](phase3/INTEGRATION_PLAN.en.md) for acceptance conditions.
