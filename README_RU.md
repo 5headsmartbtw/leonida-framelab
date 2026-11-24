@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/banner.svg" width="100%" alt="Leonida FrameLab" /></p>
+<p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
 <p align="center"><strong>Разобраться в кадре. Сгенерировать. Проверить результат.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Сборка</a> · <a href="docs/phase3/VALIDATION.md">Проверки</a> · <a href="docs/ROADMAP.md">План</a></p>
 

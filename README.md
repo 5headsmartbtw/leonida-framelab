@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/banner.svg" width="100%" alt="Leonida FrameLab" /></p>
+<p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
 <p align="center"><strong>Understand the frame. Generate it. Verify the result.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Build</a> · <a href="docs/phase3/VALIDATION.md">Evidence</a> · <a href="docs/ROADMAP.md">Roadmap</a></p>
 <p align="center"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-67d8bc" /> <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-79a6ff" /> <img alt="Experimental research" src="https://img.shields.io/badge/Status-experimental-e5bd69" /> <a href="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml"><img alt="Contract tests" src="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml/badge.svg" /></a></p>
