@@ -6,11 +6,11 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 
 | Workstream | Priority | Implementation boundary |
 | --- | --- | --- |
-| SDK-01 | P0 | The public ABI and [D3D12 FG dispatch](sdk/D3D12_FG.md) are verified. Extract public Vulkan FG and independent SR dispatch next. |
+| SDK-01 | P0 | The public ABI and installed [D3D12 FG](sdk/D3D12_FG.md) and [Vulkan FG](sdk/VULKAN_FG.md) dispatch have reference hardware evidence. Resolve the Vulkan synchronization checks, then extract independent SR dispatch. |
 | SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumers pass on Windows and Linux. |
 | SR-01 | P0 | SR-only passed Vulkan validation on the reference RTX 2050. Extract reusable SR dispatch from this profile. |
 | D3D-01 | P0 | The installed [public D3D12 FG component](sdk/D3D12_FG.md) passed the external consumer, real fence/lifetime checks and matched the old readback. |
-| VK-01 | P1 | The [standalone image handoff](../tests/vulkan-handoff/README.md) verified binary and timeline waits on distinct queues. Wire it into the FG consumer and test lifetime, cancellation and resize. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
+| VK-01 | P1 | The installed FG client verified same-family timeline handoff, cross-family binary handoff and GPU-timeline lease retirement under standard Vulkan validation. Close the SyncVal and cancellation coverage gaps. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
 | FFI-01 | P1 | [Raw Rust FFI](../bindings/rust/README.md) passes C layout and shared-library lifecycle tests on Windows and Linux. |
 | INT-01 / INT-02 | P1 | Read-only [Leonida](integrations/leonida/README.md) and [VIctory](integrations/victory/README.md) audits identify consumer seams and missing evidence. |
 | COMBO-01 | P1 | Verify independent and combined SR/FG paths with generated readback. |
@@ -31,7 +31,7 @@ Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding
 ## Next milestones
 
 1. **Independent reproduction:** rerun the configurable sample from a clean checkout on another developer's machine. Record the GPU, driver, SDK and runtime, actual present modes and any unsupported cases. See the [GPU test procedure](BUILD.md#run-the-gpu-checks).
-2. **Multi-queue completion:** connect the verified standalone timeline/binary handoff and queue-family ownership transfers to native FG. Never label a different producer submission as the same command stream.
+2. **Vulkan FG synchronization:** isolate the private NGX synchronization diagnostics and independently reproduce both queue handoff profiles.
 3. **Semantic provider:** identify final-compatible color/depth/MV/camera/jitter for a real frame with evidence. Unknown bindings remain unavailable.
 4. **Resource leases in Leonida:** pin actual resource/device/view owners, exact generations and completion tickets through all FG/presentation users.
 5. **Shared present seam:** integrate only after previous gates, preserve tracker rollback, lock order, deferred frames and Xbox/DXGI frame-token policy.

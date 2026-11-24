@@ -9,7 +9,7 @@ Want to help? See the [contribution rules](CONTRIBUTING.md) and [claim a task in
 
 The SDK core installs a C ABI for FG input validation, frame sequencing and resource leases. Build it as a static or shared library and link from an external C/C++ project with `FrameLab::FrameLab`. The public header and default build use no game or GPU SDK headers. See [SDK setup and lifecycle](docs/sdk/README.md) and the [experimental release checklist](docs/sdk/RELEASE_CHECKLIST.md).
 
-The optional [D3D12 FG component](docs/sdk/D3D12_FG.md) records real NGX work from an external app and retains resources through its completion fence. Native Vulkan FG and Streamline SR are still exercised separately in the reference sample.
+The optional [D3D12 FG](docs/sdk/D3D12_FG.md) and [Vulkan FG](docs/sdk/VULKAN_FG.md) components let an external host record Direct NGX work and retain input resources until verified GPU completion. Streamline SR remains available in the reference sample.
 
 ## What is the testbed?
 
@@ -24,9 +24,9 @@ The repository brings together a working Windows Vulkan/D3D12 FG testbed, an API
 | Area | Verified result | Boundary |
 |---|---|---|
 | Direct NGX FG / D3D12 | Feature creation, Evaluate, readback and real/generated Present on RTX 2050 | Independent synthetic baseline |
-| Direct NGX FG / native Windows Vulkan | Working 2X in the sample's own animated 3D scene | External SM86 dependency + experimental Vulkan layer |
+| Direct NGX FG / native Windows Vulkan | Installed SDK generated baseline-identical frames in the animated 3D scene with one command stream and with separate queues in the same or different families | Reference RTX 2050, external SM86 runtime, open synchronization validation gate |
 | DLSS Super Resolution / Streamline | 120 successful Evaluate calls, Vulkan validation 0/0 on RTX 2050 | Combined SR + FG is unverified |
-| FrameInputs Phase 3 | 59 checks, baseline-identical control image, tested missing-depth fallback | Current GPU consumer is Vulkan-only, one command stream |
+| FrameInputs Phase 3 | 59 checks, baseline-identical control image, tested missing-depth fallback | The original Phase 3 evidence covers one Vulkan command stream |
 | VSync / resize / FG toggle | Live Immediate↔FIFO, resize to 1920×1009, disable/re-enable; validation 0/0 | API Present counts are not physical scanout or latency |
 | Leonida integration | Pipeline audited, concrete integration plan written | Required game semantics and completion/lifetime seam still missing |
 

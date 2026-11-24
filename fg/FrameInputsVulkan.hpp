@@ -33,18 +33,11 @@ inline VkFormat vulkanFormat(Format f) {
     }
 }
 inline VkImageLayout vulkanLayout(State s){switch(s){case State::shader_read:return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;case State::color_attachment:return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;case State::depth_attachment:return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;case State::general:return VK_IMAGE_LAYOUT_GENERAL;default:return VK_IMAGE_LAYOUT_UNDEFINED;}}
-inline Result validateVulkan(const VulkanFrameInputs& b,VkCommandBuffer consumer,VkDevice device,VkQueue queue,std::uint32_t family) {
-    if(auto r=validate(b.frame);!r)return r;
+inline Result validateVulkanImages(const VulkanFrameInputs& b,std::uint32_t family,Id ownerQueue) {
     const auto& f=b.frame;
-    if(!consumer||!b.device||b.device!=device||b.deviceId!=f.device||b.queue!=queue||!queue||b.queueFamily!=family||b.queueId!=f.sync.queue)
-        return {Error::binding,"Vulkan device/queue binding mismatch"};
-    // This backend implements only ordered recording in the SAME command buffer/queue.
-    // External waits and queue-family ownership transfers must be implemented before accepting them.
-    if(f.sync.completion!=Completion::same_command_stream||b.producerCommands!=consumer||b.commandStreamId!=f.sync.commandStream)
-        return {Error::unsupported,"Vulkan completion mode/command stream unsupported"};
     const Image* neutral[]={&f.color,&f.depth,&f.motionVectors};const VulkanImage* native[]={&b.color,&b.depth,&b.motionVectors};
     for(int i=0;i<3;++i){const auto& n=*neutral[i];const auto& v=*native[i];
-        if(n.id!=v.id||!v.image||!v.view||v.extent!=n.extent||v.format!=vulkanFormat(n.format)||v.layout!=vulkanLayout(n.state)||v.queueFamily!=family||n.ownerQueue!=b.queueId)
+        if(n.id!=v.id||!v.image||!v.view||v.extent!=n.extent||v.format!=vulkanFormat(n.format)||v.layout!=vulkanLayout(n.state)||v.queueFamily!=family||n.ownerQueue!=ownerQueue)
             return {Error::binding,"Vulkan image identity/format/layout/ownership mismatch"};
         const auto expected=i==1?VK_IMAGE_ASPECT_DEPTH_BIT:VK_IMAGE_ASPECT_COLOR_BIT;
         if(v.aspects!=expected)return {Error::binding,"Vulkan image view aspect mismatch"};
@@ -57,5 +50,14 @@ inline Result validateVulkan(const VulkanFrameInputs& b,VkCommandBuffer consumer
     if(f.camera.projectionSpace!=ClipSpace::y_down_zero_to_one||f.camera.reprojectionSpace!=ClipSpace::y_up_zero_to_one)
         return {Error::unsupported,"Direct NGX camera convention pair unsupported"};
     return {};
+}
+inline Result validateVulkan(const VulkanFrameInputs& b,VkCommandBuffer consumer,VkDevice device,VkQueue queue,std::uint32_t family) {
+    if(auto r=validate(b.frame);!r)return r;
+    const auto& f=b.frame;
+    if(!consumer||!b.device||b.device!=device||b.deviceId!=f.device||b.queue!=queue||!queue||b.queueFamily!=family||b.queueId!=f.sync.queue)
+        return {Error::binding,"Vulkan device/queue binding mismatch"};
+    if(f.sync.completion!=Completion::same_command_stream||b.producerCommands!=consumer||b.commandStreamId!=f.sync.commandStream)
+        return {Error::unsupported,"Vulkan completion mode/command stream unsupported"};
+    return validateVulkanImages(b,family,b.queueId);
 }
 } // namespace frame_inputs

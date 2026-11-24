@@ -40,7 +40,11 @@
 #include "_autogen/scene.vert.h"
 #include "_autogen/scene.frag.h"
 
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+#include "public_vulkan_fg.hpp"
+#else
 #include "direct_ngx_fg.hpp"
+#endif
 #include <filesystem>
 #include <chrono>
 #include <atomic>
@@ -48,6 +52,13 @@ static bool g_directFG = true, g_verifyDirectFG = false;
 static unsigned g_frameLimit=0;
 static int g_missingDepthFrame=-1;
 static bool g_validation=false;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+enum class SdkHandoff { none, sameFamily, crossFamily };
+static SdkHandoff g_sdkHandoff=SdkHandoff::none;
+static bool g_cancelFirstFgResize=false;
+static int g_cancelEvaluateFrame=-1;
+static bool g_cancelledEvaluate=false;
+#endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
 static VKAPI_ATTR VkBool32 VKAPI_CALL sampleValidation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void*) {
@@ -123,7 +134,12 @@ static const VkFormat SAMPLE_COLOR_FORMATS[] = {
 class StreamlineSample : public nvvkhl::AppBaseVk
 {
 public:
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  PublicVulkanFg directFG;
+  VkCommandBuffer sdkConsumerCommands{};
+#else
   DirectNgxFG directFG;
+#endif
   unsigned directRealPresents=0,directGeneratedPresents=0;
   bool directReady=false;
   VkSurfaceKHR directSurface{};
@@ -314,7 +330,7 @@ public:
     m_animationTime += g_verifyDirectFG ? 1.0f/30.0f : ImGui::GetIO().DeltaTime;
   }
 
-  void renderFrame(VkCommandBuffer cmd, sl::FrameToken* frame)
+  void renderFrame(VkCommandBuffer& cmd, sl::FrameToken* frame)
   {
     const VkExtent2D renderSize = m_gBuffers->getSize();
     const VkExtent2D outputSize = getSize();
@@ -457,16 +473,33 @@ public:
 
     // Scene rendering
     {
+      const auto prepareAttachment=[&](VkImage image,VkImageLayout layout,VkImageAspectFlags aspects){
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+        if(g_directFG&&directFG.willSplit()) {
+          // Discard the previous contents, while still ordering the layout write after
+          // prior producer stores and consumer reads on the reused allocations.
+          VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+          barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+          barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+          barrier.newLayout=layout;
+          barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+          barrier.image=image;
+          barrier.subresourceRange={aspects,0,1,0,1};
+          vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                               0,0,nullptr,0,nullptr,1,&barrier);
+          return;
+        }
+#endif
+        nvvk::cmdBarrierImageLayout(cmd,image,VK_IMAGE_LAYOUT_UNDEFINED,layout,aspects);
+      };
       std::vector<VkImageView> colorImageViews;
       for(uint32_t i = 0; i < std::size(SAMPLE_COLOR_FORMATS); i++)
       {
         colorImageViews.push_back(m_gBuffers->getColorImageView(i));
-        nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(i), VK_IMAGE_LAYOUT_UNDEFINED,
-                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        prepareAttachment(m_gBuffers->getColorImage(i),VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_ASPECT_COLOR_BIT);
       }
-      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                  VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+      prepareAttachment(m_gBuffers->getDepthImage(),VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT);
 
       nvvk::createRenderingInfo renderingInfo({{0, 0}, renderSize}, colorImageViews, m_gBuffers->getDepthImageView(),
                                               VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR);
@@ -597,8 +630,31 @@ public:
     directReady=false;
     if(g_directFG){
       auto inputs=frameInputs(cmd,directConstants);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(directFG.willSplit()) {
+        directFG.splitProducer(cmd,inputs);
+        sdkConsumerCommands=createTempCmdBuffer();
+        cmd=sdkConsumerCommands;
+      }
+#endif
       if(g_missingDepthFrame>=0&&inputs.frame.frameIndex==std::uint64_t(g_missingDepthFrame))inputs.frame.depth={};
       directReady=directFG.evaluate(cmd,inputs);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(g_cancelEvaluateFrame>=0&&inputs.frame.frameIndex==uint64_t(g_cancelEvaluateFrame)) {
+        // The producer was submitted on the other queue. Keep its semaphore wait,
+        // but discard the unsubmitted consumer recording before cancelling at the SDK.
+        if(!sdkConsumerCommands)throw std::runtime_error("cancellation needs a separate consumer recording");
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&sdkConsumerCommands);
+        if(!directFG.cancelUnsubmitted(true))
+          throw std::runtime_error("native Evaluate cancellation did not exercise a recording");
+        sdkConsumerCommands=createTempCmdBuffer();
+        cmd=sdkConsumerCommands;
+        directReady=false;
+        g_cancelledEvaluate=true;
+        std::printf("PUBLIC_VULKAN_FG native_evaluate_cancelled=1 source_frame=%llu\n",
+                    static_cast<unsigned long long>(inputs.frame.frameIndex));
+      }
+#endif
     }
     renderOutput(cmd,directReady);
 
@@ -741,9 +797,19 @@ public:
     auto submitPresent=[&](bool generated){
       uint32_t i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkResetFences(m_device,1,&m_waitFences[i]));
       VkSemaphore read=m_swapChain.getActiveReadSemaphore(),write=m_swapChain.getActiveWrittenSemaphore();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      // Wait before the first swapchain layout transition in the post command buffer.
+      VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+#else
       VkPipelineStageFlags stage=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+#endif
       VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.waitSemaphoreCount=si.signalSemaphoreCount=si.commandBufferCount=1;si.pWaitSemaphores=&read;si.pWaitDstStageMask=&stage;si.pSignalSemaphores=&write;si.pCommandBuffers=&m_commandBuffers[i];
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(sdkConsumerCommands)si.pCommandBuffers=&sdkConsumerCommands;
+      NVVK_CHECK(directFG.submit(si,m_waitFences[i]));
+#else
       NVVK_CHECK(vkQueueSubmit(m_queue,1,&si,m_waitFences[i]));
+#endif
       VkPresentInfoKHR present{};m_swapChain.presentCustom(present);auto r=vkQueuePresentKHR(m_queue,&present);
       if(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR){if(generated)++directGeneratedPresents;else ++directRealPresents;}
       else {++directFG.errors;directFG.enabled=false;printf("DIRECT_PRESENT_ERROR=%d\n",int(r));}
@@ -751,13 +817,27 @@ public:
     };
     submitPresent(directReady);
     directFG.onGpuCompleted();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(sdkConsumerCommands){
+      vkFreeCommandBuffers(m_device,m_cmdPool,1,&sdkConsumerCommands);
+      sdkConsumerCommands=VK_NULL_HANDLE;
+    }
+#endif
     if(directReady){
       bool recreated=false;
-      if(!m_swapChain.acquire(&recreated)||recreated){directFG.enabled=false;++directFG.errors;return;}
+      if(!m_swapChain.acquire(&recreated)||recreated){
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+        directFG.finishFrame();
+#endif
+        directFG.enabled=false;++directFG.errors;return;
+      }
       const auto i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkWaitForFences(m_device,1,&m_waitFences[i],VK_TRUE,30000000000ull));
       VkCommandBuffer cmd=m_commandBuffers[i];NVVK_CHECK(vkResetCommandBuffer(cmd,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
       NVVK_CHECK(vkBeginCommandBuffer(cmd,&bi));renderOutput(cmd,false);NVVK_CHECK(vkEndCommandBuffer(cmd));submitPresent(false);
     }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    directFG.finishFrame();
+#endif
   }
 
   void drawGui()
@@ -1072,7 +1152,28 @@ private:
     m_frameOwner=std::make_shared<SampleFrameOwner>(SampleFrameOwner{m_alloc,m_gBuffers});
     ++m_inputGeneration;
     if(g_directFG){
-      auto cmd=createTempCmdBuffer();directFG.resize(cmd,size,g_verifyDirectFG);submitTempCmdBuffer(cmd);
+      auto cmd=createTempCmdBuffer();directFG.resize(cmd,size,g_verifyDirectFG);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(g_cancelFirstFgResize) {
+        g_cancelFirstFgResize=false;
+        // Discard the native recording before releasing the objects it references.
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
+        if(!directFG.cancelUnsubmitted(false))
+          throw std::runtime_error("native resize cancellation did not exercise a recording");
+        std::puts("PUBLIC_VULKAN_FG native_resize_cancelled=1");
+        cmd=createTempCmdBuffer();
+        directFG.resize(cmd,size,g_verifyDirectFG);
+      }
+      NVVK_CHECK(vkEndCommandBuffer(cmd));
+      VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
+      NVVK_CHECK(directFG.submit(submit,VK_NULL_HANDLE));
+      NVVK_CHECK(vkQueueWaitIdle(m_queue));
+      directFG.onGpuCompleted();
+      vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
+#else
+      submitTempCmdBuffer(cmd);
+#endif
       if(directFG.outputView){VkDescriptorImageInfo image={m_defaultSampler,directFG.outputView,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};auto write=m_dset->makeWrite(1,1,&image);vkUpdateDescriptorSets(m_device,1,&write,0,nullptr);}
     }
 
@@ -1185,12 +1286,24 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--verify-fg"))g_verifyFG=true;
     if(!strcmp(argv[i],"--verify-sr"))g_srOnly=true;
     if(!strcmp(argv[i],"--validation"))g_validation=true;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(!strcmp(argv[i],"--sdk-handoff-same"))g_sdkHandoff=SdkHandoff::sameFamily;
+    if(!strcmp(argv[i],"--sdk-handoff-cross"))g_sdkHandoff=SdkHandoff::crossFamily;
+    if(!strcmp(argv[i],"--sdk-cancel-first-resize"))g_cancelFirstFgResize=true;
+    if(!strcmp(argv[i],"--sdk-cancel-evaluate-frame")&&i+1<argc)g_cancelEvaluateFrame=std::max(0,atoi(argv[++i]));
+#endif
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
     if(!strcmp(argv[i],"--vsync"))g_initialVsync=true;
     if(!strcmp(argv[i],"--verify-direct-fg")){g_verifyDirectFG=true;g_frameLimit=24;}
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
   }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  if(g_cancelEvaluateFrame>=0&&(!g_directFG||g_sdkHandoff!=SdkHandoff::sameFamily||g_missingDepthFrame==g_cancelEvaluateFrame)) {
+    std::fputs("Evaluate cancellation requires same-family installed FG and an accepted input frame\n",stderr);
+    return 2;
+  }
+#endif
   g_srOnly=g_srOnly&&!g_verifyFG;
   const bool verifySr=g_srOnly||g_verifyFG;
   try {
@@ -1322,7 +1435,14 @@ int main(int argc, char** argv)
     // Reflex's VK_NV_low_latency2 dependency needs present_id or present_id2.
     contextInfo.addDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME,false,&directPresentId);
   }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  auto contextOwner=std::shared_ptr<nvvk::Context>(new nvvk::Context,[](auto* context){
+    context->deinit();delete context;
+  });
+  auto& context=*contextOwner;
+#else
   nvvk::Context context;
+#endif
   if(!context.initInstance(contextInfo))
   {
     return static_cast<int>(sl::Result::eErrorVulkanAPI);
@@ -1336,7 +1456,33 @@ int main(int argc, char** argv)
     printf("SAMPLE_VALIDATION_MESSENGER_CREATED\n");
   }
   const auto compatible=context.getCompatibleDevices(contextInfo);
-  if(compatible.empty()||!context.initDevice(compatible[contextInfo.compatibleDeviceIndex],contextInfo))return static_cast<int>(sl::Result::eErrorVulkanAPI);
+  if(compatible.empty())return static_cast<int>(sl::Result::eErrorVulkanAPI);
+  const auto deviceIndex=compatible[contextInfo.compatibleDeviceIndex];
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  bool requestSameFamilyProducer=false;
+  if(g_directFG&&g_sdkHandoff==SdkHandoff::sameFamily) {
+    const auto physical=context.getPhysicalDevices().at(deviceIndex);
+    uint32_t count=0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,nullptr);
+    std::vector<VkQueueFamilyProperties> families(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,families.data());
+    const auto required=contextInfo.defaultQueueGCT;
+    requestSameFamilyProducer=std::any_of(families.begin(),families.end(),[required](const auto& family) {
+      return family.queueCount>=2&&(family.queueFlags&required)==required;
+    });
+    if(requestSameFamilyProducer)contextInfo.addRequestedQueue(required);
+  }
+#endif
+  if(!context.initDevice(deviceIndex,contextInfo))return static_cast<int>(sl::Result::eErrorVulkanAPI);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  // Reserve the requested producer before the optional Streamline queue lookups
+  // consume entries from the same nvpro queue pool.
+  nvvk::Context::Queue sdkProducer{};
+  if(requestSameFamilyProducer)
+    sdkProducer=context.createQueue(contextInfo.defaultQueueGCT,"FrameLab graphics producer");
+  if(g_directFG&&g_sdkHandoff==SdkHandoff::crossFamily)
+    sdkProducer=context.m_queueT;
+#endif
   // Verify that the requested features are actually supported on the created device
   sl::AdapterInfo adapter;
   adapter.vkPhysicalDevice = context.m_physicalDevice;
@@ -1434,7 +1580,7 @@ int main(int argc, char** argv)
   appInfo.device              = context.m_device;
   appInfo.instance            = context.m_instance;
   appInfo.physicalDevice      = context.m_physicalDevice;
-  appInfo.queueIndices        = {context.m_queueGCT.queueIndex};
+  appInfo.queueIndices        = {context.m_queueGCT.familyIndex};
   appInfo.surface             = surface;
   appInfo.size.width          = SAMPLE_WIDTH;
   appInfo.size.height         = SAMPLE_HEIGHT;
@@ -1443,6 +1589,29 @@ int main(int argc, char** argv)
   appInfo.useVsync = useVsync;  // V-Sync must be off for DLSS-G to work (see also sl::FeatureRequirementFlags::eVSyncOffRequired)
 
   StreamlineSample app;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  app.directFG.deviceOwner=contextOwner;
+  app.directFG.retirementProbeFrame=g_frameLimit?g_frameLimit-1:0;
+  if(g_directFG&&g_sdkHandoff!=SdkHandoff::none) {
+    const auto& producer=sdkProducer;
+    const bool cross=g_sdkHandoff==SdkHandoff::crossFamily;
+    if(!producer.queue||producer.queue==context.m_queueGCT.queue||
+       cross==(producer.familyIndex==context.m_queueGCT.familyIndex)){
+      std::puts("SKIP: requested producer queue topology is unavailable");
+      slShutdown();
+      vkDestroySurfaceKHR(context.m_instance,surface,nullptr);
+      if(validationMessenger) {
+        auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+          vkGetInstanceProcAddr(context.m_instance,"vkDestroyDebugUtilsMessengerEXT"));
+        destroy(context.m_instance,validationMessenger,nullptr);
+      }
+      return 77;
+    }
+    app.directFG.producerQueue=producer.queue;
+    app.directFG.producerFamily=producer.familyIndex;
+    app.directFG.crossFamily=cross;
+  }
+#endif
   app.create(appInfo, dlssSupported, dlssgSupported, verifySr);
   seriesStart=std::chrono::steady_clock::now();
 
@@ -1480,7 +1649,7 @@ int main(int argc, char** argv)
     // Rendering
     {
       const uint32_t        curFrame = app.getCurFrame();
-      const VkCommandBuffer cmd      = app.getCommandBuffers()[curFrame];
+      VkCommandBuffer cmd = app.getCommandBuffers()[curFrame];
 
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::eRenderSubmitStart, *frame);
 
@@ -1517,6 +1686,9 @@ int main(int argc, char** argv)
     bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&app.directGeneratedPresents>0&&(!g_verifyDirectFG||app.directFG.verified==app.directGeneratedPresents);
     const unsigned expectedRejections=g_missingDepthFrame>=0&&unsigned(g_missingDepthFrame)<verifiedFrames?1u:0u;
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(g_cancelEvaluateFrame>=0)passed=passed&&g_cancelledEvaluate;
+#endif
     printf("VERIFY_FRAMEINPUTS rejected=%u expected_rejections=%u in_flight=%d\n",app.directFG.rejectedFrames,expectedRejections,int(app.directFG.hasInFlightInputs()));
     printf("VERIFY_DIRECT_FG real_frames=%u evaluations=%u verified=%u real_presents=%u generated_presents=%u errors=%u seconds=%.6f passed=%d\n",verifiedFrames,app.directFG.evaluations,app.directFG.verified,app.directRealPresents,app.directGeneratedPresents,app.directFG.errors,seconds,int(passed));verifyPassed=passed;
   }
@@ -1531,7 +1703,11 @@ int main(int argc, char** argv)
     auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(context.m_instance,"vkDestroyDebugUtilsMessengerEXT"));destroy(context.m_instance,validationMessenger,nullptr);
     printf("SAMPLE_VALIDATION_SUMMARY errors=%u warnings=%u\n",g_validationErrors.load(),g_validationWarnings.load());if(g_validationErrors)verifyPassed=false;
   }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  contextOwner.reset();
+#else
   context.deinit();
+#endif
 
   glfwDestroyWindow(window);
   glfwTerminate();
