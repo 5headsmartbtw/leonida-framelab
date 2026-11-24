@@ -1,11 +1,17 @@
 <p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
-<p align="center"><strong>Windows testbed for DLSS Frame Generation, Super Resolution, and the FrameInputs contract.</strong></p>
+<p align="center"><strong>FrameLab SDK core for temporal frame inputs, with NVIDIA DLSS validation samples.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Build</a> · <a href="docs/phase3/VALIDATION.en.md">Evidence</a> · <a href="docs/ROADMAP.md">Roadmap</a></p>
 <p align="center"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-67d8bc" /> <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-79a6ff" /> <img alt="Experimental research" src="https://img.shields.io/badge/Status-experimental-e5bd69" /> <a href="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml"><img alt="Contract tests" src="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml/badge.svg" /></a></p>
 
 Want to help? See the [contribution rules](CONTRIBUTING.md) and [claim a task in Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
 
-## What is this?
+## FrameLab SDK
+
+The SDK core installs a C ABI for FG input validation, frame sequencing and resource leases. Build it as a static or shared library and link from an external C/C++ project with `FrameLab::FrameLab`. The public header and default build use no game or GPU SDK headers. See [SDK setup and lifecycle](docs/sdk/README.md) and the [experimental release checklist](docs/sdk/RELEASE_CHECKLIST.md).
+
+The current package exposes the input/lifetime contract. Direct NGX FG and Streamline SR remain independently exercised in the optional native sample while reusable dispatch modules are extracted.
+
+## What is the testbed?
 
 **Leonida FrameLab** is an experimental research and validation project for **NVIDIA DLSS Frame Generation and Super Resolution**, intended to prepare a careful future integration with [Leonida](https://github.com/ItsNotRexed/Leonida).
 

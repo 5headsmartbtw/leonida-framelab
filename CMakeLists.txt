@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(LeonidaFrameLab VERSION 0.3.0 LANGUAGES CXX)
+project(FrameLab VERSION 0.4.0 LANGUAGES CXX)
+include(cmake/FrameLabSDK.cmake)
 include(CTest)
 option(FRAMELAB_BUILD_SAMPLE "Build the Windows Vulkan reference sample (external SDKs required)" OFF)
 option(FRAMELAB_BUILD_LAYER "Build the experimental Windows Vulkan layer" OFF)
