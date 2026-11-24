@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 250" role="img" aria-label="Leonida FrameLab — DLSS Frame Generation and Super Resolution research">
+<defs><linearGradient id="bg"><stop stop-color="#0c1628"/><stop offset="1" stop-color="#142c35"/></linearGradient><linearGradient id="line"><stop stop-color="#56e0c2"/><stop offset="1" stop-color="#79a6ff"/></linearGradient></defs>
+<rect width="1200" height="250" rx="24" fill="url(#bg)"/>
+<path d="M50 208H1150" stroke="#274759"/>
+<text x="55" y="78" fill="#6be7cc" font-family="sans-serif" font-size="15" letter-spacing="4">RENDER · INTERPOLATE · VERIFY</text>
+<text x="52" y="137" fill="#f1f6fc" font-family="sans-serif" font-size="49" font-weight="700">Leonida FrameLab</text>
+<text x="56" y="179" fill="#b2c6d8" font-family="sans-serif" font-size="21">DLSS Frame Generation &amp; Super Resolution research</text>
+<g stroke="url(#line)" stroke-width="3" fill="none"><rect x="899" y="51" width="112" height="125" rx="9" opacity=".35"/><rect x="929" y="66" width="112" height="125" rx="9" opacity=".65"/><rect x="959" y="81" width="112" height="125" rx="9"/></g>
+<path d="M916 145L951 126L979 147L1017 104L1054 127" fill="none" stroke="#6be7cc" stroke-width="3"/>
+</svg>

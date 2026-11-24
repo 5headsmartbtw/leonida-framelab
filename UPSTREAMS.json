@@ -1,0 +1,13 @@
+{
+  "local_validated_baseline": "a175d35f01a7c172429f79af27b6c6d43704b6b9",
+  "local_completed_phase3": "b017e469d740e167dc45db95c67b0737d3d4594b",
+  "vk_streamline_upstream": "02fe6f70dfc9ce809cb8bca312fe26c8a69a3cd9",
+  "dlssg_open_upstream": "1ab86b9fe6b13ac70cf1812fbf0e5c5e6ffb64ac",
+  "leonida_audited": "8575d36edc479218972497a7bded8651a42856c0",
+  "nvpro_core": "bc19d6ac3ef62938d0ea0e099735878457ce1b6e",
+  "notes": [
+    "No proprietary SDK payloads or game data are distributed.",
+    "Runtime C++ imported without portability edits; sample CMake placement adapted.",
+    "Original runtime paths are documented and tracked as unfinished portability work."
+  ]
+}

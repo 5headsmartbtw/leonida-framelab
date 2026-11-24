@@ -1,0 +1,35 @@
+Start testing: Nov 24 00:38 RTZ 2 (����)
+----------------------------------------------------------
+1/2 Testing: frame_inputs_neutral
+1/2 Test: frame_inputs_neutral
+Command: "E:/Dev/GTA6/build/phase3-contract-tests/Release/frame_inputs_test.exe"
+Directory: E:/Dev/GTA6/build/phase3-contract-tests
+"frame_inputs_neutral" start time: Nov 24 00:38 RTZ 2 (����)
+Output:
+----------------------------------------------------------
+PASS neutral FrameInputs checks=43
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"frame_inputs_neutral" end time: Nov 24 00:38 RTZ 2 (����)
+"frame_inputs_neutral" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: frame_inputs_vulkan_bindings
+2/2 Test: frame_inputs_vulkan_bindings
+Command: "E:/Dev/GTA6/build/phase3-contract-tests/Release/frame_inputs_vulkan_test.exe"
+Directory: E:/Dev/GTA6/build/phase3-contract-tests
+"frame_inputs_vulkan_bindings" start time: Nov 24 00:38 RTZ 2 (����)
+Output:
+----------------------------------------------------------
+PASS Vulkan binding checks=16
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"frame_inputs_vulkan_bindings" end time: Nov 24 00:38 RTZ 2 (����)
+"frame_inputs_vulkan_bindings" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 24 00:38 RTZ 2 (����)

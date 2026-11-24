@@ -1,0 +1,15 @@
+name: Engineering proposal
+description: Propose a scoped improvement with a validation plan
+title: "[Proposal] "
+body:
+  - type: textarea
+    attributes:
+      label: Problem and proposed change
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Validation and compatibility boundaries
+      description: What will demonstrate correctness, and what will remain unsupported?
+    validations:
+      required: true

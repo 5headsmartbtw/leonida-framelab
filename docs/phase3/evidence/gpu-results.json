@@ -1,0 +1,41 @@
+[
+  {
+    "name": "off",
+    "exit_code": 0,
+    "evaluations": 6,
+    "verified": 5,
+    "real_presents": 6,
+    "generated_presents": 5,
+    "input_rejections": 0,
+    "validation_errors": 0,
+    "validation_warnings": 0,
+    "stderr_bytes": 0,
+    "baseline_sha256": "CAA4A0256F6920A8FC596FC414680D9544B72ABFF5C7F6E3C148A6D6924D96A2",
+    "frameinputs_sha256": "CAA4A0256F6920A8FC596FC414680D9544B72ABFF5C7F6E3C148A6D6924D96A2",
+    "baseline_identical": true
+  },
+  {
+    "name": "on",
+    "exit_code": 0,
+    "evaluations": 6,
+    "verified": 5,
+    "real_presents": 6,
+    "generated_presents": 5,
+    "input_rejections": 0,
+    "validation_errors": 0,
+    "validation_warnings": 0,
+    "stderr_bytes": 0
+  },
+  {
+    "name": "missing-depth",
+    "exit_code": 0,
+    "evaluations": 5,
+    "verified": 3,
+    "real_presents": 6,
+    "generated_presents": 3,
+    "input_rejections": 1,
+    "validation_errors": 0,
+    "validation_warnings": 0,
+    "stderr_bytes": 0
+  }
+]

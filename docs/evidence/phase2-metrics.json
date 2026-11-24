@@ -1,0 +1,44 @@
+{
+  "d3d12": {
+    "seconds": 8.727162,
+    "real_frames": 60,
+    "accepted_real_presents": 60,
+    "accepted_generated_presents": 56,
+    "real_loop_fps": 6.875087227669201,
+    "accepted_present_rate": 13.291835306827123,
+    "steady_samples": 51,
+    "vram_counter_peak_mib": 186.7578125,
+    "ram_working_peak_mib": 319.11328125,
+    "gpu_ms": {
+      "median": 28.475296,
+      "p95": 72.06086400000001,
+      "p99": 73.510448
+    },
+    "frame_ms": {
+      "median": 128.8037,
+      "p95": 179.38414999999998,
+      "p99": 183.62165
+    }
+  },
+  "vulkan": {
+    "seconds": 14.91306,
+    "real_frames": 60,
+    "accepted_real_presents": 60,
+    "accepted_generated_presents": 56,
+    "real_loop_fps": 4.023319157838834,
+    "accepted_present_rate": 7.778417038488413,
+    "steady_samples": 51,
+    "vram_counter_peak_mib": 189.5703125,
+    "ram_working_peak_mib": 312.76953125,
+    "gpu_ms": {
+      "median": 36.305504,
+      "p95": 89.44752,
+      "p99": 90.68254400000001
+    },
+    "frame_ms": {
+      "median": 238.5145,
+      "p95": 297.5774,
+      "p99": 300.3262
+    }
+  }
+}

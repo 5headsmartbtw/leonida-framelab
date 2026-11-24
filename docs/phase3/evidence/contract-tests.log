@@ -1,0 +1,10 @@
+Internal ctest changing into directory: E:/Dev/GTA6/build/phase3-contract-tests
+Test project E:/Dev/GTA6/build/phase3-contract-tests
+    Start 1: frame_inputs_neutral
+1/2 Test #1: frame_inputs_neutral .............   Passed    0.11 sec
+    Start 2: frame_inputs_vulkan_bindings
+2/2 Test #2: frame_inputs_vulkan_bindings .....   Passed    0.11 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   0.22 sec

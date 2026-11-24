@@ -1,0 +1,59 @@
+{
+  "repository": "Leonida",
+  "head": "8575d36edc479218972497a7bded8651a42856c0",
+  "mode": "read-only static audit; no game data",
+  "files": [
+    {
+      "path": "runtime/src/vulkan_replay.h",
+      "sha256": "90834f2089d198997f00e4eae7e110b75cd6c8bbd8a5e52d29ad109f902187db"
+    },
+    {
+      "path": "runtime/src/vulkan_backend.h",
+      "sha256": "db8404595cdd25dc0282da2aa3e121ca8c8e827e029479c38d02bc2283ecda0f"
+    },
+    {
+      "path": "runtime/src/vulkan_present.h",
+      "sha256": "3c3230ddcc309cf147d3193d664852b877185d861149a0e8c2cfdb8403763c2d"
+    },
+    {
+      "path": "runtime/src/vulkan_scratch.h",
+      "sha256": "3dc1ff60cd146a80afd8ca7266bbe54e5f0bb327d89f4f95d999e486692ffc30"
+    },
+    {
+      "path": "runtime/shims/d3d12_com.cpp",
+      "sha256": "a5d03b06dee8c5571f2ce6b12b0cbb9e1b35d9a489add46000fe53d22764f588"
+    },
+    {
+      "path": "runtime/shims/d3d12_vulkan_device.cpp",
+      "sha256": "29d0be46154014e40b4ac0029bcfc93505a6507973e1fc830fc18e209605ff1d"
+    },
+    {
+      "path": "runtime/shims/xbox_present.cpp",
+      "sha256": "f2cd2a69cb4d66fe37c13b90f41c78bd6a48249a0cc53392c3f95ddd99357600"
+    },
+    {
+      "path": "docs/d3d12_vulkan.md",
+      "sha256": "fd313fbe1f90bb6457b3c12c4dc8ccd380d36e5c983b439b27c9d17d600c53a4"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "d4134972483ceff4d3df5d5db2631bb08e89459e93e95771de70969351e14151"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "06f2f99f997dbf9fc83e023e1853c93b26179740f91c5616935c958f13621c61"
+    },
+    {
+      "path": "docs/design.md",
+      "sha256": "435cc4c6adb837a908d4104ead5b80139e733968f8122d8cc9d54563a152f0e1"
+    },
+    {
+      "path": "runtime/src/mods.h",
+      "sha256": "bd6c07f9ea335c7c82394206a970aa0341a25412c7eff2f3da0e9891a98950cf"
+    },
+    {
+      "path": "runtime/src/main.cpp",
+      "sha256": "14d0885629781989eafbf4a92a545380fce8eeffec24539a4a6a0014e2ca662c"
+    }
+  ]
+}

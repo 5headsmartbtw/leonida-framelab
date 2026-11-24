@@ -1,0 +1,60 @@
+{
+  "date": "2026-11-24",
+  "phase3_branch": "experiment/phase3-frame-inputs",
+  "phase3_commit": "b017e469d740e167dc45db95c67b0737d3d4594b",
+  "baseline_ref": "baseline/phase2-validated-a175d35",
+  "baseline_commit": "a175d35f01a7c172429f79af27b6c6d43704b6b9",
+  "leonida_unchanged_commit": "8575d36edc479218972497a7bded8651a42856c0",
+  "baseline_exe_sha256": "6029f3d818faf2931296f54cdab1cf62c132ef536b75f476fe5996b30d23dce9",
+  "phase3_exe_sha256": "1f82eb96904b876760dd99d4760bfadd3a9cbda154302946707a4072516e50bd",
+  "baseline_control_sha256": "caa4a0256f6920a8fc596fc414680d9544b72abff5c7f6e3c148a6d6924d96a2",
+  "gpu_results": [
+    {
+      "name": "off",
+      "exit_code": 0,
+      "evaluations": 6,
+      "verified": 5,
+      "real_presents": 6,
+      "generated_presents": 5,
+      "input_rejections": 0,
+      "validation_errors": 0,
+      "validation_warnings": 0,
+      "stderr_bytes": 0,
+      "baseline_sha256": "CAA4A0256F6920A8FC596FC414680D9544B72ABFF5C7F6E3C148A6D6924D96A2",
+      "frameinputs_sha256": "CAA4A0256F6920A8FC596FC414680D9544B72ABFF5C7F6E3C148A6D6924D96A2",
+      "baseline_identical": true
+    },
+    {
+      "name": "on",
+      "exit_code": 0,
+      "evaluations": 6,
+      "verified": 5,
+      "real_presents": 6,
+      "generated_presents": 5,
+      "input_rejections": 0,
+      "validation_errors": 0,
+      "validation_warnings": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "name": "missing-depth",
+      "exit_code": 0,
+      "evaluations": 5,
+      "verified": 3,
+      "real_presents": 6,
+      "generated_presents": 3,
+      "input_rejections": 1,
+      "validation_errors": 0,
+      "validation_warnings": 0,
+      "stderr_bytes": 0
+    }
+  ],
+  "source_sha256": {
+    "main.cpp": "54307193c3b5523fd75bcb581040e18261e9bb4fdbfafa066c94df92de04a13d",
+    "direct_ngx_fg.hpp": "3a62128088d88d6301e5c4f2d8f4f8a079c0f702fa3e715de38e150507e8eabb",
+    "fg/FrameInputs.hpp": "3c7194d8b355817ea9e7e4173740b55bc5ce681cd3a696fc4f3d89edeb092f58",
+    "fg/FrameInputsVulkan.hpp": "411f2a580e94ed358b9888fa111a5c9419b82bf9632e082edb2a9071fe5815b6",
+    "tests/test_frame_inputs.cpp": "dd267c72c3ab434c4017f84af239f605ff044cdf557c14d878a59476223c7f68",
+    "tests/test_frame_inputs_vulkan.cpp": "5d7a79cc14eae552e050dad6ef1a345488e2e28d66ca89fd8483028020477d89"
+  }
+}
