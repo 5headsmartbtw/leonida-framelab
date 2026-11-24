@@ -17,4 +17,4 @@ body:
   - type: textarea
     attributes:
       label: Evidence
-      description: Sanitized text logs or your own synthetic scene; no game data, SDK binaries or kernel dumps
+      description: Use sanitized logs or an original synthetic scene. GTA VI Game Files, game-derived captures or dumps, and links or attachments distributing them are strictly prohibited. Do not attach NVIDIA binaries or kernels.
