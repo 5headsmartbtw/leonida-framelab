@@ -7,9 +7,9 @@ The current release scope is incremental. The package and its ABI are tested sep
 | Independent C and C++ consumers | Both compile with the installed include directory and link through `FrameLab::FrameLab`. The C test exercises an accepted packet through preparation, submission acknowledgement, retirement and final release. |
 | Static and shared installs | Exercise both package variants on Windows and Linux in [SDK package CI](../../.github/workflows/sdk-package.yml). |
 | Versioned ABI, lifecycle and safety | ABI v1 version and descriptor size checks. The [public contract](README.md) documents caller-side ordering, real completion and callback obligations. |
-| Independent hardware-backed FG and SR | Existing Vulkan FG/Streamline SR profiles are sample paths. Extract each feature as an independently invoked SDK module, preserve readback evidence and keep native capability verdicts. |
-| Vulkan and D3D12 consumers | Each backend must validate actual resources, state and submission ownership before recording. D3D12 and external Vulkan waits require independent synthetic GPU evidence. |
-| Rust FFI | Verify layout against the C header and exercise installed-library lifecycle calls before a Rust integration. |
+| Independent hardware-backed FG and SR | The original Vulkan FG and [SR-only](../evidence/sr-only-rtx2050.md) profiles pass in the sample. Expose each native dispatch as an independently invoked SDK feature before a GPU SDK release. |
+| Vulkan and D3D12 consumers | The [D3D12 reference](../../experiments/d3d12/FRAME_INPUTS.md) recorded a verified workload on a native queue. The [Vulkan handoff test](../../tests/vulkan-handoff/README.md) covered separate queues and family ownership. Public native dispatch and real external completion in the FG consumer remain open. |
+| Rust FFI | [Raw Rust bindings](../../bindings/rust/README.md) pass layout comparison against the C header and shared-library lifecycle tests on Windows and Linux. |
 | Combined SR + FG | Require on-device readback, validation, resize/reset and fallback on a narrowly specified combined profile before declaring support. |
 | Tests and publication | Keep original FG regressions and portable CI passing. Record tested hardware, commands, failed/skipped checks and third-party source attribution. Keep proprietary binaries and game files outside the package. |
 

@@ -7,12 +7,12 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 | Workstream | Priority | Implementation boundary |
 | --- | --- | --- |
 | SDK-01 | P0 | Public C ABI, FG metadata validation and submission lifecycle first. Extract independently callable native FG and SR dispatch next. |
-| SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumer matrix. |
+| SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumers pass on Windows and Linux. |
 | SR-01 | P0 | SR-only passed Vulkan validation on the reference RTX 2050. Extract reusable SR dispatch from this profile. |
-| D3D-01 | P0 | Validate native resources and execute a synthetic D3D12 FrameInputs workload with real fence evidence. |
-| VK-01 | P1 | Real external producer waits and queue-family transfer tests. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
-| FFI-01 | P1 | Rust FFI with layout and installed-library lifecycle tests. |
-| INT-01 / INT-02 | P1 | Read-only Leonida and VIctory integration audits. Keep both outside the SDK dependency graph. |
+| D3D-01 | P0 | The [D3D12 reference](../experiments/d3d12/FRAME_INPUTS.md) passed fence, readback and stale-depth checks. Native public dispatch is still open. |
+| VK-01 | P1 | The [standalone image handoff](../tests/vulkan-handoff/README.md) verified binary and timeline waits on distinct queues. Wire it into the FG consumer and test lifetime, cancellation and resize. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
+| FFI-01 | P1 | [Raw Rust FFI](../bindings/rust/README.md) passes C layout and shared-library lifecycle tests on Windows and Linux. |
+| INT-01 / INT-02 | P1 | Read-only [Leonida](integrations/leonida/README.md) and [VIctory](integrations/victory/README.md) audits identify consumer seams and missing evidence. |
 | COMBO-01 | P1 | Verify independent and combined SR/FG paths with generated readback. |
 | QA-01 | P1 | Independent reproduction on another machine. |
 
@@ -31,7 +31,7 @@ Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding
 ## Next milestones
 
 1. **Independent reproduction:** rerun the configurable sample from a clean checkout on another developer's machine. Record the GPU, driver, SDK and runtime, actual present modes and any unsupported cases. See the [GPU test procedure](BUILD.md#run-the-gpu-checks).
-2. **Multi-queue completion:** implement real timeline/binary waits and queue-family ownership transfers in an independent harness. Never label a different producer submission as the same command stream.
+2. **Multi-queue completion:** connect the verified standalone timeline/binary handoff and queue-family ownership transfers to native FG. Never label a different producer submission as the same command stream.
 3. **Semantic provider:** identify final-compatible color/depth/MV/camera/jitter for a real frame with evidence. Unknown bindings remain unavailable.
 4. **Resource leases in Leonida:** pin actual resource/device/view owners, exact generations and completion tickets through all FG/presentation users.
 5. **Shared present seam:** integrate only after previous gates, preserve tracker rollback, lock order, deferred frames and Xbox/DXGI frame-token policy.
