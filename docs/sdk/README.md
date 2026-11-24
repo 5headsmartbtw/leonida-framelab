@@ -1,6 +1,6 @@
 # FrameLab SDK core
 
-FrameLab provides a C++20 library and a C ABI for validating temporal frame metadata and tracking resource ownership across a frame submission. This experimental package contains the FG input contract and lifecycle. The optional GPU sample demonstrates Direct NGX FG and Streamline SR in separate modes. Native GPU dispatch is still sample code.
+FrameLab provides a C++20 library and a C ABI for validating temporal frame metadata and tracking resource ownership across a frame submission. This experimental package contains the FG input contract and lifecycle. The [optional D3D12FG component](D3D12_FG.md) adds public Direct NGX dispatch. The Vulkan sample continues to exercise separate FG and SR modes.
 
 ## Install and link
 
