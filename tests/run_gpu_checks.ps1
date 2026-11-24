@@ -6,6 +6,7 @@ param(
     [string]$LogRoot = (Join-Path (Get-Location) 'framelab-logs'),
     [string]$BaselineReadback,
     [ValidateSet('legacy','same-stream','same-family','cross-family')][string]$VulkanSdkProfile='legacy',
+    [ValidateSet('all','off','on','missing-depth')][string]$Scenario='all',
     [switch]$SynchronizationValidation
 )
 $ErrorActionPreference='Stop'
@@ -29,6 +30,7 @@ $handoffArgs=@(switch ($VulkanSdkProfile) {
     'cross-family' { @('--sdk-handoff-cross') }
     default { @() }
 })
+if ($Scenario -ne 'all') { $cases = @($cases | Where-Object { $_.name -eq $Scenario }) }
 $results=@()
 foreach($case in $cases){
     $caseLogs=Join-Path $logs $case.name
@@ -55,7 +57,7 @@ foreach($case in $cases){
         Write-Output "SKIP Vulkan SDK profile ${VulkanSdkProfile}: requested producer queue topology is unavailable"
         return
     }
-    if($run.ExitCode -ne 0){throw "Nonzero exit: $($case.name). See $stdout"}
+    if($run.ExitCode -ne 0){throw "Exit $($run.ExitCode) in $($case.name). See $stdout"}
     if((Get-Item -LiteralPath $stderr).Length -ne 0){throw "Validation stderr was not empty: $stderr"}
     if(-not $text.Contains('SAMPLE_VALIDATION_SUMMARY errors=0 warnings=0')){throw "Validation failed: $stdout"}
     if(-not $text.Contains("evaluations=$($case.evaluations) verified=$($case.generated) real_presents=6 generated_presents=$($case.generated) errors=0")){throw "Unexpected frame counters: $stdout"}

@@ -47,7 +47,11 @@ $exe = "./client-build/bin/Release/vk_streamline.exe"
 $baseline = "<local legacy control run>/direct/generated-5.rgba16f"
 foreach ($profile in 'same-stream','cross-family','same-family') {
   ./tests/run_gpu_checks.ps1 -Executable $exe -BaselineReadback $baseline -VulkanSdkProfile $profile
-  ./tests/run_gpu_checks.ps1 -Executable $exe -BaselineReadback $baseline -VulkanSdkProfile $profile -SynchronizationValidation
+  foreach ($scenario in 'off','on','missing-depth') {
+    try {
+      ./tests/run_gpu_checks.ps1 -Executable $exe -BaselineReadback $baseline -VulkanSdkProfile $profile -Scenario $scenario -SynchronizationValidation
+    } catch { Write-Warning $_ }
+  }
 }
 ```
 
@@ -61,6 +65,7 @@ The installed client ran on Windows 11 build 26200, RTX 2050 Laptop (SM 8.6, 4 G
 | Missing depth with either topology | 5 evaluations, 3 verified generated images, 6 real presents, 1 expected rejection, and 0 errors / 0 warnings in each run. Frame 2 bypassed NGX and frame 3 reset history. |
 | Readback and GPU ownership | Both topologies matched the legacy control SHA-256 `caa4a0256f6920a8fc596fc414680d9544b72abff5c7f6e3c148a6d6924d96a2`. The final gated submit refused early retirement and destruction. The actual GPU signal preceded the final lease release. |
 | Live FIFO resize | Recreated NGX at 1008×601 after starting at 1280×720. Exit 0, 0 errors / 0 warnings and empty stderr. Readback disabled for the live run. |
-| Extended synchronization validation | Failed with 10 errors / 0 warnings in the first control case on each exercised topology. The preserved legacy sample reproduced the same count and reported write-after-write hazards in `vkCmdClearColorImage` and `vkCmdFillBuffer` on private `nv.ngx.dlssg.resource` objects. No diagnostics were suppressed by FrameLab. The runner stopped before FIFO and missing-depth in each extended run. |
+| Extended synchronization validation | Failed on both exercised topologies. Immediate and FIFO each reported 10 errors / 0 warnings. Missing depth reported 9 errors / 0 warnings. The preserved legacy Immediate run reproduced the 10-error count. Reported hazards were write-after-write in `vkCmdClearColorImage` and `vkCmdFillBuffer` on private `nv.ngx.dlssg.resource` objects. The Khronos layer reported its default duplicate-message limit. FrameLab did not suppress diagnostics. |
+| Regression checks | The rebuilt legacy Vulkan sample passed all three standard GPU cases. Both contract tests and all three installed C/C++ tests passed. The D3D12 client rebuilt against the same DLL, verified 5 generated images and matched the [original D3D12 readback SHA-256](D3D12_FG.md#hardware-evidence). |
 | Separate queues, same family | Skipped. The reference device did not expose the requested second graphics/compute queue. The standalone handoff test covers that topology separately. |
 | Other outstanding checks | Native cancellation and failed submission fault injection, capability-negative hardware, device loss, independent GPU replication, reusable SR dispatch and combined SR + FG. |
