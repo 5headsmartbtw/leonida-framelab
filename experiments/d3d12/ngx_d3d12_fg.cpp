@@ -23,6 +23,60 @@ static void NVSDK_CONV ngxLog(const char* s,NVSDK_NGX_Logging_Level,NVSDK_NGX_Fe
 static void hrcheck(HRESULT hr,const char* name){if(FAILED(hr)){printf("FAIL %s hr=%08lx\n",name,hr);throw std::runtime_error(name);}}
 #define HR(x) hrcheck((x),#x)
 #include "d3d12_presentation.h"
+#include "../../src/backends/d3d12/frame_bindings.hpp"
+
+namespace fi=frame_inputs;
+namespace bindings=framelab::d3d12;
+
+static std::shared_ptr<ID3D12Resource> pin(ID3D12Resource* resource) {
+    resource->AddRef();
+    return {resource,[](ID3D12Resource* owned){ owned->Release(); }};
+}
+
+static fi::Camera syntheticCamera() {
+    fi::Camera camera;
+    camera.verified=true;camera.cameraMotionIncluded=true;
+    camera.nearPlane=0.1f;camera.farPlane=1000;camera.fovRadians=1;camera.aspect=float(W)/H;
+    camera.up[1]=camera.right[0]=camera.forward[2]=1;
+    camera.projectionSpace=camera.reprojectionSpace=fi::ClipSpace::y_up_zero_to_one;
+    camera.motion=fi::MotionConvention::previous_minus_current_uv;
+    DirectX::XMFLOAT4X4 proj,inv,ident;
+    auto projection=DirectX::XMMatrixPerspectiveFovLH(camera.fovRadians,camera.aspect,camera.nearPlane,camera.farPlane);
+    DirectX::XMStoreFloat4x4(&proj,projection);
+    DirectX::XMStoreFloat4x4(&inv,DirectX::XMMatrixInverse(nullptr,projection));
+    DirectX::XMStoreFloat4x4(&ident,DirectX::XMMatrixIdentity());
+    memcpy(camera.viewToClip.data(),&proj,sizeof(proj));
+    memcpy(camera.clipToView.data(),&inv,sizeof(inv));
+    for(auto* matrix:{&camera.clipToLens,&camera.clipToPrevious,&camera.previousToClip})
+        memcpy(matrix->data(),&ident,sizeof(ident));
+    return camera;
+}
+
+static NVSDK_NGX_DLSSG_Opt_Eval_Params evaluateOptions(const fi::FrameInputs& frame) {
+    const auto& c=frame.camera;
+    NVSDK_NGX_DLSSG_Opt_Eval_Params options{};
+    options.multiFrameCount=options.multiFrameIndex=1;
+    options.cameraNear=c.nearPlane;options.cameraFar=c.farPlane;
+    options.cameraFOV=c.fovRadians;options.cameraAspectRatio=c.aspect;
+    memcpy(options.cameraPos,c.position.data(),sizeof(options.cameraPos));
+    memcpy(options.cameraUp,c.up.data(),sizeof(options.cameraUp));
+    memcpy(options.cameraRight,c.right.data(),sizeof(options.cameraRight));
+    memcpy(options.cameraFwd,c.forward.data(),sizeof(options.cameraFwd));
+    memcpy(options.mvecScale,c.motionVectorScale.data(),sizeof(options.mvecScale));
+    memcpy(options.cameraViewToClip,c.viewToClip.data(),sizeof(options.cameraViewToClip));
+    memcpy(options.clipToCameraView,c.clipToView.data(),sizeof(options.clipToCameraView));
+    memcpy(options.clipToLensClip,c.clipToLens.data(),sizeof(options.clipToLensClip));
+    memcpy(options.clipToPrevClip,c.clipToPrevious.data(),sizeof(options.clipToPrevClip));
+    memcpy(options.prevClipToClip,c.previousToClip.data(),sizeof(options.prevClipToClip));
+    options.reset=frame.resetHistory!=fi::Reset::none;
+    options.depthInverted=c.depthInverted;options.cameraMotionIncluded=c.cameraMotionIncluded;
+    options.orthoProjection=c.orthographic;options.motionVectorsInvalidValue=1e30f;
+    options.mvecsSubrectSize={frame.motionVectors.extent.width,frame.motionVectors.extent.height};
+    options.depthSubrectSize={frame.depth.extent.width,frame.depth.extent.height};
+    options.backbufferSubrectSize={frame.color.extent.width,frame.color.extent.height};
+    options.outputInterpSubrectSize={frame.outputExtent.width,frame.outputExtent.height};
+    return options;
+}
 struct Texture {ComPtr<ID3D12Resource> resource;D3D12_RESOURCE_STATES state=D3D12_RESOURCE_STATE_COPY_DEST;};
 struct Context {
     ComPtr<IDXGIAdapter3> adapter3;ComPtr<ID3D12Device> device;ComPtr<ID3D12CommandQueue> queue;ComPtr<ID3D12CommandAllocator> alloc;
@@ -63,6 +117,14 @@ int wmain(int argc,wchar_t**argv){
         printf("NGX init=%08x\n",unsigned(r));if(NVSDK_NGX_FAILED(r))return 1;
         NVSDK_NGX_Parameter*caps=nullptr;r=NVSDK_NGX_D3D12_GetCapabilityParameters(&caps);printf("NGX capabilities=%08x\n",unsigned(r));if(NVSDK_NGX_FAILED(r)||!caps)return 1;
         int available=0;caps->Get(NVSDK_NGX_Parameter_FrameGeneration_Available,&available);printf("FrameGeneration.Available=%d\n",available);
+        if(available!=1){
+            NVSDK_NGX_D3D12_DestroyParameters(caps);
+            NVSDK_NGX_D3D12_Shutdown1(c.device.Get());
+            if(presentation)presenter.shutdown();
+            if(ngxLogFile)fclose(ngxLogFile);
+            return 3;
+        }
+        NVSDK_NGX_D3D12_DestroyParameters(caps);
         NVSDK_NGX_Parameter*params=nullptr;r=NVSDK_NGX_D3D12_AllocateParameters(&params);if(NVSDK_NGX_FAILED(r))return 1;
         NVSDK_NGX_DLSSG_Create_Params cp{};cp.Width=W;cp.Height=H;cp.RenderWidth=W;cp.RenderHeight=H;cp.NativeBackbufferFormat=DXGI_FORMAT_R8G8B8A8_UNORM;
         params->Set("DLSSG.SynchronousInit",1u);params->Set("DLSSG.EnableInterp",1u);
@@ -70,6 +132,15 @@ int wmain(int argc,wchar_t**argv){
         auto color=c.texture(DXGI_FORMAT_R8G8B8A8_UNORM),depth=c.texture(DXGI_FORMAT_R32_FLOAT),mv=c.texture(DXGI_FORMAT_R16G16_FLOAT),output=c.texture(DXGI_FORMAT_R8G8B8A8_UNORM);
         std::vector<uint32_t> pixels(W*H),sentinel(W*H,0xffff00ff),previous;std::vector<float> depths(W*H);std::vector<uint16_t> vectors(W*H*2);
         ComPtr<ID3D12QueryHeap> queries;D3D12_QUERY_HEAP_DESC qh{};qh.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;qh.Count=2;HR(c.device->CreateQueryHeap(&qh,IID_PPV_ARGS(&queries)));auto timeReadback=c.buffer(16,D3D12_HEAP_TYPE_READBACK);UINT64 frequency=0;HR(c.queue->GetTimestampFrequency(&frequency));
+        using bindings::ImageBinding;
+        ImageBinding colorBinding{11,pin(color.resource.Get()),color.state};
+        ImageBinding depthBinding{12,pin(depth.resource.Get()),depth.state};
+        ImageBinding motionBinding{13,pin(mv.resource.Get()),mv.state};
+        ImageBinding outputBinding{14,pin(output.resource.Get()),output.state};
+        const bindings::RecordContext recording{1,1,1,*c.device.Get(),*c.queue.Get(),*c.list.Get()};
+        const auto camera=syntheticCamera();
+        fi::Sequence history;
+        auto previousFrameTime=std::chrono::steady_clock::time_point{};
         unsigned verified=0;auto seriesBegin=std::chrono::steady_clock::now();
         for(unsigned frame=0;frame<frameCount;++frame){
             auto frameBegin=std::chrono::steady_clock::now();
@@ -78,15 +149,45 @@ int wmain(int argc,wchar_t**argv){
             for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x){unsigned p=y*W+x;bool obj=x>=left&&x<left+160&&y>=240&&y<480;bool grid=((x/32+y/32)%2)!=0;pixels[p]=obj?0xff2080f0:(grid?0xff303030:0xff181818);depths[p]=obj?0.3f:0.9f;vectors[2*p]=DirectX::PackedVector::XMConvertFloatToHalf(obj?-32.0f/W:0.0f);vectors[2*p+1]=0;}
             if(presentation){presenter.mark(sl::PCLMarker::eSimulationEnd);presenter.mark(sl::PCLMarker::eRenderSubmitStart);}
             c.begin();c.upload(color,pixels.data(),W*4,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);c.upload(depth,depths.data(),W*4,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);c.upload(mv,vectors.data(),W*4,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);c.upload(output,sentinel.data(),W*4,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            NVSDK_NGX_D3D12_DLSSG_Eval_Params ep{};ep.pBackbuffer=color.resource.Get();ep.pDepth=depth.resource.Get();ep.pMVecs=mv.resource.Get();ep.pOutputInterpFrame=output.resource.Get();
-            NVSDK_NGX_DLSSG_Opt_Eval_Params o{};o.multiFrameCount=1;o.multiFrameIndex=1;o.cameraNear=0.1f;o.cameraFar=1000;o.cameraFOV=1;o.cameraAspectRatio=float(W)/H;o.cameraUp[1]=1;o.cameraRight[0]=1;o.cameraFwd[2]=1;o.mvecScale[0]=o.mvecScale[1]=1;o.reset=(frame%18)==0;o.cameraMotionIncluded=true;o.motionVectorsInvalidValue=1e30f;
-            DirectX::XMFLOAT4X4 proj,inv,ident;auto P=DirectX::XMMatrixPerspectiveFovLH(1.0f,float(W)/H,0.1f,1000);DirectX::XMStoreFloat4x4(&proj,P);DirectX::XMStoreFloat4x4(&inv,DirectX::XMMatrixInverse(nullptr,P));DirectX::XMStoreFloat4x4(&ident,DirectX::XMMatrixIdentity());
-            memcpy(o.cameraViewToClip,&proj,64);memcpy(o.clipToCameraView,&inv,64);memcpy(o.clipToLensClip,&ident,64);memcpy(o.clipToPrevClip,&ident,64);memcpy(o.prevClipToClip,&ident,64);
-            o.mvecsSubrectSize={W,H};o.depthSubrectSize={W,H};o.backbufferSubrectSize={W,H};o.outputInterpSubrectSize={W,H};
+            colorBinding.state=color.state;depthBinding.state=depth.state;
+            motionBinding.state=mv.state;outputBinding.state=output.state;
+            fi::FrameInputs inputs;
+            inputs.stream=1;inputs.device=recording.deviceId;inputs.generation=1;inputs.frameIndex=frame;
+            inputs.renderExtent=inputs.outputExtent={W,H};
+            inputs.deltaSeconds=frame ? std::chrono::duration<double>(frameBegin-previousFrameTime).count() : 1.0/60.0;
+            previousFrameTime=frameBegin;
+            const auto describe=[&](const ImageBinding& binding,fi::Format format){
+                return fi::Image{binding.id,frame,recording.queueId,format,{W,H},fi::State::shader_read,
+                    fi::Provenance::synthetic_renderer,binding.resource};
+            };
+            inputs.color=describe(colorBinding,fi::Format::rgba8_unorm);
+            inputs.depth=describe(depthBinding,fi::Format::r32_float);
+            inputs.motionVectors=describe(motionBinding,fi::Format::rg16_float);
+            inputs.camera=camera;
+            inputs.sync={fi::Completion::same_command_stream,recording.queueId,recording.commandStreamId};
+            if(frame==0)inputs.resetHistory=fi::Reset::initial;
+            else if(frame%18==0)inputs.resetHistory=fi::Reset::discontinuity;
+            if(frame==2){
+                auto stale=inputs;
+                --stale.depth.frameIndex;
+                if(bindings::check(stale,recording,colorBinding,depthBinding,motionBinding,outputBinding).error!=fi::Error::sequence)
+                    throw std::runtime_error("stale D3D12 depth was not rejected");
+                printf("D3D12_STALE_DEPTH_REJECTED_BEFORE_EVALUATE\n");
+            }
+            if(const auto result=history.check(inputs);!result)throw std::runtime_error(std::string(result.reason));
+            if(const auto result=bindings::check(inputs,recording,colorBinding,depthBinding,motionBinding,outputBinding);!result)
+                throw std::runtime_error(std::string(result.reason));
+            NVSDK_NGX_D3D12_DLSSG_Eval_Params ep{};
+            ep.pBackbuffer=colorBinding.resource.get();ep.pDepth=depthBinding.resource.get();
+            ep.pMVecs=motionBinding.resource.get();ep.pOutputInterpFrame=outputBinding.resource.get();
+            auto o=evaluateOptions(inputs);
             params->Set(NVSDK_NGX_DLSSG_Parameter_BackbufferFrameID,static_cast<unsigned long long>(frame+1));params->Set("DLSSG.EnableInterp",1u);params->Set("DLSSG.IsRecording",0u);params->Set("DLSSG.FlushRequired",0u);
             printf("ENTER Evaluate frame=%u\n",frame);auto begin=std::chrono::steady_clock::now();c.list->EndQuery(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);r=NGX_D3D12_EVALUATE_DLSSG(c.list.Get(),feature,params,&ep,&o);c.list->EndQuery(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);c.list->ResolveQueryData(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,2,timeReadback.Get(),0);printf("Evaluate frame=%u result=%08x\n",frame,unsigned(r));
             D3D12_RESOURCE_BARRIER uav{};uav.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;uav.UAV.pResource=output.resource.Get();c.list->ResourceBarrier(1,&uav);D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};auto rb=c.readback(output,fp);c.submit();
             double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();if(NVSDK_NGX_FAILED(r))return 1;
+            // submit() waited on the actual queue fence; the packet and its owners are still alive here.
+            history.accept(inputs);
+            printf("D3D12_FRAME_COMPLETED frame=%u fence=%llu\n",frame,c.value);
             void*mapped=nullptr;HR(rb->Map(0,nullptr,&mapped));std::vector<uint32_t>read(W*H);for(unsigned y=0;y<H;++y)memcpy(read.data()+y*W,(char*)mapped+fp.Offset+y*fp.Footprint.RowPitch,W*4);rb->Unmap(0,nullptr);
             size_t unchanged=0,sameCurrent=0,samePrevious=0;for(size_t i=0;i<read.size();++i){unchanged+=read[i]==sentinel[i];sameCurrent+=read[i]==pixels[i];samePrevious+=!previous.empty()&&read[i]==previous[i];}
             printf("READBACK frame=%u sentinel=%zu/%zu equal_current=%zu equal_previous=%zu cpu_wait_ms=%.3f\n",frame,unchanged,read.size(),sameCurrent,samePrevious,elapsed);
