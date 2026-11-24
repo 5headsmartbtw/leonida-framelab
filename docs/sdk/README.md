@@ -34,3 +34,5 @@ Compare `framelab_abi_version()` with `FRAMELAB_ABI_VERSION` before using ABI v1
 Serialize calls on a stream externally. Release callbacks must not throw or call back into the same stream. ABI v1 supports one pending or in-flight packet per stream. An invalid descriptor does not advance history. Keep FG and SR feature policy independent so that either path can run without the other and both can fall back to ordinary presentation.
 
 See the [installed-package consumer tests](../../tests/external-consumer/), the [FrameInputs semantics](../phase3/CONTRACT.en.md) and the [experimental release checklist](RELEASE_CHECKLIST.md).
+
+[Rust bindings and ABI tests](../../bindings/rust/README.md) are available for the shared package.
