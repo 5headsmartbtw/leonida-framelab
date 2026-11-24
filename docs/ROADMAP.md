@@ -20,3 +20,5 @@
 6. **Image quality and pacing:** camera cuts, occlusion, rapid motion, resize/memory pressure, scanout and latency measurement; later HDR/SR combinations and broader compatibility.
 
 See the detailed [integration plan](phase3/INTEGRATION_PLAN.md) for acceptance conditions. These items describe future work, not already implemented capabilities.
+
+Tracking issues: [runtime paths](https://github.com/5headsmartbtw/leonida-framelab/issues/1), [multi-queue handoff](https://github.com/5headsmartbtw/leonida-framelab/issues/2), [semantic provider](https://github.com/5headsmartbtw/leonida-framelab/issues/3).
