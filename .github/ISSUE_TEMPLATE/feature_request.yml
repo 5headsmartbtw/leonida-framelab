@@ -10,6 +10,6 @@ body:
   - type: textarea
     attributes:
       label: Validation and compatibility boundaries
-      description: What will demonstrate correctness, and what will remain unsupported?
+      description: Describe a synthetic test and the limits of its evidence. GTA VI Game Files and game-derived material are strictly prohibited in links and attachments.
     validations:
       required: true

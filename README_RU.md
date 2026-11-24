@@ -2,6 +2,8 @@
 <p align="center"><strong>Разобраться в кадре. Сгенерировать. Проверить результат.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Сборка</a> · <a href="docs/phase3/VALIDATION.md">Проверки</a> · <a href="docs/ROADMAP.md">План</a></p>
 
+Хотите помочь? Прочитайте [правила участия](CONTRIBUTING_RU.md) и [выберите задачу в Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
+
 ## Что это за проект?
 
 **Leonida FrameLab** — экспериментальный стенд **NVIDIA DLSS Frame Generation и Super Resolution** для подготовки будущей интеграции с [Leonida](https://github.com/ItsNotRexed/Leonida).

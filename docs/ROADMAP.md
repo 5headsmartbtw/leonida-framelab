@@ -1,5 +1,7 @@
 # Roadmap
 
+Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/issues/4) to claim tasks and post progress. See the [contribution rules](../CONTRIBUTING.md) before submitting changes.
+
 ## Completed locally
 
 - [x] Independent NVIDIA NGX FG image on RTX 2050 / D3D12.

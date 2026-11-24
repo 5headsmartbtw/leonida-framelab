@@ -3,6 +3,8 @@
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Build</a> · <a href="docs/phase3/VALIDATION.md">Evidence</a> · <a href="docs/ROADMAP.md">Roadmap</a></p>
 <p align="center"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-67d8bc" /> <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-79a6ff" /> <img alt="Experimental research" src="https://img.shields.io/badge/Status-experimental-e5bd69" /> <a href="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml"><img alt="Contract tests" src="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml/badge.svg" /></a></p>
 
+Want to help? See the [contribution rules](CONTRIBUTING.md) and [claim a task in Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
+
 ## What is this?
 
 **Leonida FrameLab** is an experimental research and validation project for **NVIDIA DLSS Frame Generation and Super Resolution**, intended to prepare a careful future integration with [Leonida](https://github.com/ItsNotRexed/Leonida).
