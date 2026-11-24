@@ -203,9 +203,15 @@ public:
     return false;
   }
 
-  VkResult submit(VkSubmitInfo info,VkFence fence)
+  void skipFrame()
   {
-    if(!pending&&!external)return vkQueueSubmit(consumer,1,&info,fence);
+    reset=true;
+    if(fg)check(framelab_vulkan_fg_invalidate(fg));
+  }
+
+  VkResult submit(VkSubmitInfo info,VkFence fence,VkSemaphore srTimeline=VK_NULL_HANDLE,uint64_t srValue=0)
+  {
+    if(!pending&&!external&&!srTimeline)return vkQueueSubmit(consumer,1,&info,fence);
     FrameLabVulkanFgSubmission requirements{sizeof requirements,FRAMELAB_ABI_VERSION};
     if(pending)check(framelab_vulkan_fg_submission(fg,&requirements));
     else if(external) {
@@ -214,9 +220,9 @@ public:
       requirements.wait_value=crossFamily?0:producerTicket;
     }
 
-    VkSemaphore waits[3]{},signals[2]{};
+    VkSemaphore waits[3]{},signals[3]{};
     VkPipelineStageFlags stages[3]{};
-    uint64_t waitValues[3]{},signalValues[2]{};
+    uint64_t waitValues[3]{},signalValues[3]{};
     if(info.waitSemaphoreCount>1||info.signalSemaphoreCount>1||info.pNext)
       throw std::runtime_error("unexpected synthetic sample semaphore list");
     unsigned waitCount=info.waitSemaphoreCount,signalCount=info.signalSemaphoreCount;
@@ -235,6 +241,10 @@ public:
     if(pending) {
       signals[signalCount]=requirements.completion_timeline;
       signalValues[signalCount++]=++completionTicket;
+    }
+    if(srTimeline) {
+      signals[signalCount]=srTimeline;
+      signalValues[signalCount++]=srValue;
     }
     const VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,nullptr,
       waitCount,waitValues,signalCount,signalValues};
