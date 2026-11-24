@@ -1,0 +1,19 @@
+cmake_minimum_required(VERSION 3.20)
+project(FrameLabExternalConsumer LANGUAGES C CXX)
+find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED)
+enable_testing()
+
+add_executable(c_consumer consumer.c)
+target_compile_features(c_consumer PRIVATE c_std_11)
+add_executable(cpp_consumer consumer.cpp)
+target_compile_features(cpp_consumer PRIVATE cxx_std_20)
+get_target_property(framelab_type FrameLab::FrameLab TYPE)
+foreach(consumer IN ITEMS c_consumer cpp_consumer)
+  target_link_libraries(${consumer} PRIVATE FrameLab::FrameLab)
+  if(WIN32 AND framelab_type STREQUAL "SHARED_LIBRARY")
+    add_custom_command(TARGET ${consumer} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:FrameLab::FrameLab>" "$<TARGET_FILE_DIR:${consumer}>"
+      VERBATIM)
+  endif()
+  add_test(NAME ${consumer} COMMAND ${consumer})
+endforeach()

@@ -1,10 +1,16 @@
 <p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
-<p align="center"><strong>Стенд для проверки DLSS Frame Generation, Super Resolution и контракта FrameInputs на Windows.</strong></p>
+<p align="center"><strong>Ядро FrameLab SDK для входов временной обработки кадров и стенд проверки NVIDIA DLSS.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Сборка</a> · <a href="docs/phase3/VALIDATION.md">Проверки</a> · <a href="docs/ROADMAP.md">План</a></p>
 
 Хотите помочь? Прочитайте [правила участия](CONTRIBUTING_RU.md) и [выберите задачу в Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
 
-## Что это за проект?
+## FrameLab SDK
+
+Ядро SDK устанавливает C ABI для проверки входов FG, последовательности кадров и удержания ресурсов. Внешний проект на C или C++ подключает статическую или динамическую библиотеку через `FrameLab::FrameLab`. Для заголовка и обычной сборки не нужны GPU SDK или игровой рантайм. См. [сборку SDK и жизненный цикл](docs/sdk/README.md) и [критерии экспериментального релиза](docs/sdk/RELEASE_CHECKLIST.md).
+
+Публичный пакет пока покрывает входы и владение ресурсами. Direct NGX FG и Streamline SR запускаются отдельно в тестовой сцене, пока их вызовы выносятся в библиотеку.
+
+## Как устроен стенд?
 
 **Leonida FrameLab** — экспериментальный стенд **NVIDIA DLSS Frame Generation и Super Resolution** для подготовки будущей интеграции с [Leonida](https://github.com/ItsNotRexed/Leonida).
 

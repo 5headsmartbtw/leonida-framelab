@@ -2,6 +2,22 @@
 
 Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/issues/4) to claim tasks and post progress. See the [contribution rules](../CONTRIBUTING.md) before submitting changes.
 
+## SDK track
+
+| Workstream | Priority | Implementation boundary |
+| --- | --- | --- |
+| SDK-01 | P0 | Public C ABI, FG metadata validation and submission lifecycle first. Extract independently callable native FG and SR dispatch next. |
+| SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumer matrix. |
+| SR-01 | P0 | Establish a clean SR-only Vulkan validation baseline before extracting SR dispatch. |
+| D3D-01 | P0 | Validate native resources and execute a synthetic D3D12 FrameInputs workload with real fence evidence. |
+| VK-01 | P1 | Real external producer waits and queue-family transfer tests. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
+| FFI-01 | P1 | Rust FFI with layout and installed-library lifecycle tests. |
+| INT-01 / INT-02 | P1 | Read-only Leonida and VIctory integration audits. Keep both outside the SDK dependency graph. |
+| COMBO-01 | P1 | Verify independent and combined SR/FG paths with generated readback. |
+| QA-01 | P1 | Independent reproduction on another machine. |
+
+Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding whether a profile is ready to publish.
+
 ## Completed locally
 
 - [x] Independent NVIDIA NGX FG image on RTX 2050 / D3D12.
