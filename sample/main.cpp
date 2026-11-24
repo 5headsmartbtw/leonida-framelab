@@ -41,6 +41,9 @@
 #include "_autogen/scene.frag.h"
 
 #include "direct_ngx_fg.hpp"
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+#include "public_vulkan_sr.hpp"
+#endif
 #include <filesystem>
 #include <chrono>
 #include <atomic>
@@ -56,6 +59,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL sampleValidation(VkDebugUtilsMessageSeveri
 }
 static bool g_verifyFG = false;
 static bool g_srOnly = false;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+static bool g_sdkSr = false;
+static int g_sdkSrReject = -1;
+#endif
 static bool useManagedSwapchain() { return g_directFG || g_srOnly; }
 static int SAMPLE_WIDTH  = 1920;
 static int SAMPLE_HEIGHT = 1080;
@@ -255,6 +262,10 @@ public:
       m_dlssgOptions.numFramesToGenerate = 1;
       m_reflexOptions.mode = sl::ReflexMode::eLowLatency;
     }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(g_sdkSr&&!sdkSr.create(info.physicalDevice,info.device,m_queue,m_graphicsQueueIndex,g_streamlineLogDir))
+      m_dlssOptions.mode=sl::DLSSMode::eOff;
+#endif
     // Set Streamline default options
     slDLSSSetOptions(m_viewportHandle, m_dlssOptions);
     if(!useManagedSwapchain()) slDLSSGSetOptions(m_viewportHandle, m_dlssgOptions);
@@ -277,6 +288,9 @@ public:
     vkDeviceWaitIdle(m_device);
 
     if(g_directFG)directFG.shutdown();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(g_sdkSr)sdkSr.shutdown();
+#endif
     releaseSrPresentSemaphores();
     destroyImages();
     destroyPipelines();
@@ -316,6 +330,9 @@ public:
 
   void renderFrame(VkCommandBuffer cmd, sl::FrameToken* frame)
   {
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    sdkSrFallback=false;
+#endif
     const VkExtent2D renderSize = m_gBuffers->getSize();
     const VkExtent2D outputSize = getSize();
 
@@ -574,6 +591,43 @@ public:
     {
       nvvk::cmdBarrierImageLayout(cmd, m_outputImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr) {
+        const auto source=sdkSrFrames++;
+        const bool reject=g_sdkSrReject>=0&&source==uint32_t(g_sdkSrReject);
+        const uint32_t limit=g_frameLimit?std::min(120u,g_frameLimit):120u;
+        const auto inputOwner=PublicVulkanSrSample::lease(m_frameOwner);
+        const auto outputOwner=PublicVulkanSrSample::lease(sdkOutput);
+        constexpr VkImageUsageFlags common=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
+            VK_IMAGE_USAGE_SAMPLED_BIT;
+        constexpr VkImageUsageFlags colorUsage=common|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_STORAGE_BIT;
+        constexpr VkImageUsageFlags depthUsage=common|VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        constexpr VkImageUsageFlags outputUsage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        const FrameLabExtent inputSize{renderSize.width,renderSize.height};
+        const FrameLabExtent resultSize{outputSize.width,outputSize.height};
+        const FrameLabVulkanSrImage color{m_gBuffers->getColorImage(0),m_gBuffers->getColorImageView(0),
+            inputSize,SAMPLE_COLOR_FORMATS[0],VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,colorUsage,
+            VK_IMAGE_ASPECT_COLOR_BIT,m_graphicsQueueIndex,inputOwner.get()};
+        const FrameLabVulkanSrImage depth{m_gBuffers->getDepthImage(),m_gBuffers->getDepthImageView(),
+            inputSize,m_gBuffers->getDepthFormat(),VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,depthUsage,
+            VK_IMAGE_ASPECT_DEPTH_BIT,m_graphicsQueueIndex,inputOwner.get()};
+        const FrameLabVulkanSrImage motion{m_gBuffers->getColorImage(1),m_gBuffers->getColorImageView(1),
+            inputSize,SAMPLE_COLOR_FORMATS[1],VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,colorUsage,
+            VK_IMAGE_ASPECT_COLOR_BIT,m_graphicsQueueIndex,inputOwner.get()};
+        const FrameLabVulkanSrImage output{m_outputImage.image,m_outputImageView,resultSize,SAMPLE_COLOR_FORMATS[0],
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,outputUsage,VK_IMAGE_ASPECT_COLOR_BIT,m_graphicsQueueIndex,outputOwner.get()};
+        const bool firstAtExtent=sdkSrCaptureResize;
+        const bool evaluated=sdkSr.record(cmd,uint32_t(*frame),reject,directConstants,color,depth,motion,output,
+                                           firstAtExtent||source+1==limit);
+        if(evaluated) { ++srSuccesses;sdkSrCaptureResize=false; }
+        else {
+          nvvk::cmdBarrierImageLayout(cmd,color.image,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        sdkSrFallback=!evaluated;
+      } else
+#endif
+      {
       const sl::BaseStructure* inputs[] = {&m_viewportHandle};
 
       if(SL_FAILED(res, slEvaluateFeature(sl::kFeatureDLSS, *frame, inputs, static_cast<uint32_t>(std::size(inputs)), cmd)))
@@ -584,6 +638,7 @@ public:
       else
       {
         ++srSuccesses;
+      }
       }
     }
     else
@@ -686,8 +741,12 @@ public:
       vkCmdSetScissor(cmd, 0, 1, &scissor);
 
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_postPipeline);
+      unsigned outputSet=generated?1:0;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(!generated&&sdkSrFallback)outputSet=2;
+#endif
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1,
-                              m_dset->getSets()+(generated?1:0), 0, nullptr);
+                              m_dset->getSets()+outputSet, 0, nullptr);
 
       vkCmdDraw(cmd, 3, 1, 0, 0);
 
@@ -719,13 +778,21 @@ public:
       NVVK_CHECK(vkResetFences(m_device,1,&m_waitFences[index]));
       const VkSemaphore acquired=m_swapChain.getActiveReadSemaphore();
       const VkSemaphore ready=srPresentReady[index];
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      const VkPipelineStageFlags stage=g_sdkSr?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+#else
       constexpr VkPipelineStageFlags stage=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+#endif
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
       submit.waitSemaphoreCount=submit.signalSemaphoreCount=submit.commandBufferCount=1;
       submit.pWaitSemaphores=&acquired;
       submit.pWaitDstStageMask=&stage;
       submit.pSignalSemaphores=&ready;
       submit.pCommandBuffers=&m_commandBuffers[index];
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr)NVVK_CHECK(sdkSr.submit(m_queue,submit,m_waitFences[index]));
+      else
+#endif
       NVVK_CHECK(vkQueueSubmit(m_queue,1,&submit,m_waitFences[index]));
       VkPresentInfoKHR present{};
       m_swapChain.presentCustom(present);
@@ -961,7 +1028,11 @@ private:
     m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
     m_dset->initLayout();
-    m_dset->initPool(g_directFG?2:1);
+    unsigned outputSets=g_directFG?2:1;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(g_sdkSr)outputSets=3;
+#endif
+    m_dset->initPool(outputSets);
     const VkPushConstantRange pushConstantRange = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(NodeInfo)};
     m_dset->initPipeLayout(1, &pushConstantRange);
 
@@ -971,6 +1042,9 @@ private:
       const VkWriteDescriptorSet   frameInfoWrite      = m_dset->makeWrite(0, 0, &frameInfoBufferInfo);
       vkUpdateDescriptorSets(m_device, 1, &frameInfoWrite, 0, nullptr);
       if(g_directFG){auto second=m_dset->makeWrite(1,0,&frameInfoBufferInfo);vkUpdateDescriptorSets(m_device,1,&second,0,nullptr);}
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr){auto fallback=m_dset->makeWrite(2,0,&frameInfoBufferInfo);vkUpdateDescriptorSets(m_device,1,&fallback,0,nullptr);}
+#endif
     }
 
     // Create the scene rendering pipeline
@@ -1046,7 +1120,17 @@ private:
       dlssSettings.optimalRenderHeight = size.height;
     }
 
-    const VkExtent2D renderSize = {dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight};
+    VkExtent2D renderSize = {dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight};
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(g_sdkSr&&sdkSr.active()&&m_dlssOptions.mode!=sl::DLSSMode::eOff) {
+      renderSize=sdkSr.configure(size,m_dlssOptions.colorBuffersHDR==sl::Boolean::eTrue);
+      sdkSrCaptureResize=true;
+      if(!renderSize.width||!renderSize.height) {
+        m_dlssOptions.mode=sl::DLSSMode::eOff;
+        renderSize=size;
+      }
+    }
+#endif
 
     m_gBuffers = std::make_shared<nvvkhl::GBuffer>(
         m_device, m_alloc.get(), renderSize,
@@ -1055,13 +1139,25 @@ private:
     if(m_dlssOptions.mode != sl::DLSSMode::eOff)
     {
       // The image DLSS Super Resolution outputs to must have the VK_IMAGE_USAGE_STORAGE_BIT usage flag, or else nothing will be rendered to it!
-      const VkImageCreateInfo outputCreateInfo =
-          nvvk::makeImage2DCreateInfo(size, SAMPLE_COLOR_FORMATS[0], VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+      VkImageUsageFlags usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_STORAGE_BIT;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr)usage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+#endif
+      const VkImageCreateInfo outputCreateInfo=nvvk::makeImage2DCreateInfo(size,SAMPLE_COLOR_FORMATS[0],usage);
       m_outputImage = m_alloc->createImage(outputCreateInfo);
 
       const VkImageViewCreateInfo outputViewCreateInfo =
           nvvk::makeImage2DViewCreateInfo(m_outputImage.image, outputCreateInfo.format);
       NVVK_CHECK(vkCreateImageView(m_device, &outputViewCreateInfo, nullptr, &m_outputImageView));
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr) {
+        sdkOutput=std::make_shared<SdkSrOutput>();
+        sdkOutput->device=m_device;
+        sdkOutput->allocator=m_alloc;
+        sdkOutput->image=m_outputImage;
+        sdkOutput->view=m_outputImageView;
+      }
+#endif
     }
     else
     {
@@ -1081,6 +1177,14 @@ private:
       const VkDescriptorImageInfo outputImageInfo = {m_defaultSampler, m_outputImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
       const VkWriteDescriptorSet outputImageWrite = m_dset->makeWrite(0, 1, &outputImageInfo);
       vkUpdateDescriptorSets(m_device, 1, &outputImageWrite, 0, nullptr);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr) {
+        const VkDescriptorImageInfo fallback{m_defaultSampler,m_gBuffers->getColorImageView(0),
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const auto write=m_dset->makeWrite(2,1,&fallback);
+        vkUpdateDescriptorSets(m_device,1,&write,0,nullptr);
+      }
+#endif
     }
   }
 
@@ -1109,6 +1213,12 @@ private:
 
   void destroyImages()
   {
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(sdkOutput) {
+      sdkOutput.reset();
+      m_outputImage={};
+    } else
+#endif
     if(m_outputImage.memHandle != nullptr)
     {
       vkDestroyImageView(m_device, m_outputImageView, nullptr);
@@ -1160,6 +1270,24 @@ private:
   VkPipeline m_scenePipeline = VK_NULL_HANDLE;
   VkPipeline m_postPipeline  = VK_NULL_HANDLE;
 
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+public:
+  PublicVulkanSrSample sdkSr;
+private:
+  struct SdkSrOutput {
+    VkDevice device{};
+    std::shared_ptr<nvvk::ResourceAllocator> allocator;
+    nvvk::Image image;
+    VkImageView view{};
+    ~SdkSrOutput(){
+      vkDestroyImageView(device,view,nullptr);
+      allocator->destroy(image);
+    }
+  };
+  std::shared_ptr<SdkSrOutput> sdkOutput;
+  unsigned sdkSrFrames{};
+  bool sdkSrCaptureResize=true,sdkSrFallback=false;
+#endif
   struct SampleFrameOwner {
     // Reverse destruction order: destroy actual views/images before their allocator.
     std::shared_ptr<nvvk::ResourceAllocator> allocator;
@@ -1184,6 +1312,10 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--streamline")||!strcmp(argv[i],"--verify-sr")||!strcmp(argv[i],"--verify-fg"))g_directFG=false;
     if(!strcmp(argv[i],"--verify-fg"))g_verifyFG=true;
     if(!strcmp(argv[i],"--verify-sr"))g_srOnly=true;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    if(!strcmp(argv[i],"--verify-sdk-sr")){g_sdkSr=true;g_srOnly=true;g_directFG=false;}
+    if(!strcmp(argv[i],"--sdk-sr-reject-frame")&&i+1<argc)g_sdkSrReject=std::max(0,atoi(argv[++i]));
+#endif
     if(!strcmp(argv[i],"--validation"))g_validation=true;
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
@@ -1322,7 +1454,12 @@ int main(int argc, char** argv)
     // Reflex's VK_NV_low_latency2 dependency needs present_id or present_id2.
     contextInfo.addDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME,false,&directPresentId);
   }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+  const auto contextOwner=std::shared_ptr<nvvk::Context>(new nvvk::Context,[](auto* value){delete value;});
+  auto& context=*contextOwner;
+#else
   nvvk::Context context;
+#endif
   if(!context.initInstance(contextInfo))
   {
     return static_cast<int>(sl::Result::eErrorVulkanAPI);
@@ -1443,6 +1580,9 @@ int main(int argc, char** argv)
   appInfo.useVsync = useVsync;  // V-Sync must be off for DLSS-G to work (see also sl::FeatureRequirementFlags::eVSyncOffRequired)
 
   StreamlineSample app;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+  app.sdkSr.deviceOwner=contextOwner;
+#endif
   app.create(appInfo, dlssSupported, dlssgSupported, verifySr);
   seriesStart=std::chrono::steady_clock::now();
 
@@ -1510,6 +1650,17 @@ int main(int argc, char** argv)
 
   const VkResult drained = vkDeviceWaitIdle(context.m_device);
   bool verifyPassed = !verifySr || (app.srSuccesses >= (g_verifyFG ? 12u : 120u) && app.srErrors == 0 && drained == VK_SUCCESS && (!g_verifyFG || (app.fgPresented > 0 && app.fgErrors == 0)));
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+  if(g_sdkSr) {
+    const unsigned expected=g_sdkSrReject>=0&&unsigned(g_sdkSrReject)<verifiedFrames?1u:0u;
+    const unsigned target=g_frameLimit?std::min(120u,g_frameLimit):120u;
+    verifyPassed=drained==VK_SUCCESS&&app.srErrors==0&&verifiedFrames==target&&
+        app.srSuccesses==target-expected&&app.sdkSr.rejected==expected&&app.sdkSr.readbacks>=2&&
+        app.sdkSr.resets>=1+expected;
+    std::printf("VERIFY_PUBLIC_VULKAN_SR readbacks=%u resets=%u rejected=%u passed=%d\n",
+                app.sdkSr.readbacks,app.sdkSr.resets,app.sdkSr.rejected,int(verifyPassed));
+  }
+#endif
   if(verifySr) std::printf("VERIFY_SR successes=%u errors=%u gpu_idle=%d output=1280x720 passed=%d\n", app.srSuccesses, app.srErrors, int(drained), int(verifyPassed));
   if(g_verifyFG) std::printf("VERIFY_FG real_frames=%u generated_presented=%u errors=%u passed=%d\n", verifiedFrames, app.fgPresented, app.fgErrors, int(verifyPassed));
   if(g_directFG){
