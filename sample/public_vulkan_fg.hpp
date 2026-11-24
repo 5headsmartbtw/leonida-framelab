@@ -76,16 +76,18 @@ public:
     pending=true;
   }
 
-  bool cancelUnsubmittedResize()
+  bool cancelUnsubmitted(bool evaluation)
   {
-    if(!pending)return false;
+    if(!pending||framePending!=evaluation)return false;
     if(framelab_vulkan_fg_destroy(fg)!=FRAMELAB_BUSY)
       throw std::runtime_error("destroy accepted an unsubmitted NGX recording");
     check(framelab_vulkan_fg_cancel(fg));
     pending=false;
+    framePending=false;
+    reset=true;
     FrameLabVulkanFgSubmission submission{sizeof submission,FRAMELAB_ABI_VERSION};
     if(framelab_vulkan_fg_submission(fg,&submission)!=FRAMELAB_INVALID_PHASE)
-      throw std::runtime_error("abandoned NGX resize still has a submission");
+      throw std::runtime_error("abandoned NGX recording still has a submission");
     return true;
   }
 

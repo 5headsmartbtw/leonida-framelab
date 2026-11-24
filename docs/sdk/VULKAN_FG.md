@@ -80,4 +80,12 @@ Build the legacy sample and the installed-package sample from the same revision.
 
 On the RTX 2050 reference runtime, both variants returned `0x1` for each native evaluation and emitted 8 errors / 0 warnings. Each callback was inside an evaluation and named a private NGX image cleared by `vkCmdClearColorImage`. There were no callbacks outside the two evaluation calls. The six-frame workload also reports private buffer fills. That larger workload is required for the actual generated-image readback and the private-buffer diagnostics.
 
-Run the normal installed verification with `-VerifyNativeResizeCancellation` to record native feature creation, discard the Vulkan command buffer before submission, cancel the SDK operation, and then recreate and verify FG. The RTX 2050 same-stream Immediate run recovered with 6 evaluations, 5 verified generated images, the original readback hash and 0 errors / 0 warnings. This exercises recovery from abandoned native creation work. Vulkan queue-submit failure injection and cancellation after recording an Evaluate remain separate coverage.
+Run the normal installed verification with `-VerifyNativeResizeCancellation` to record native feature creation, discard the Vulkan command buffer before submission, cancel the SDK operation, and then recreate and verify FG. The RTX 2050 same-stream Immediate run recovered with 6 evaluations, 5 verified generated images, the original readback hash and 0 errors / 0 warnings. This exercises recovery from abandoned native creation work. Actual Vulkan queue-submit failure injection remains unverified.
+
+To cancel an actual Evaluate recording, start the installed client with:
+
+```powershell
+& $exe --verify-direct-fg --frames 6 --validation --no-vsync --sdk-handoff-same --sdk-cancel-evaluate-frame 2
+```
+
+The client submits the actual scene producer first, records Evaluate for source frame 2 into a separate consumer command buffer, and discards that buffer before SDK cancellation. The fallback submission still waits for the producer and presents the original raster result. The RTX 2050 logged six native Evaluate recordings, five submitted Evaluate command buffers, six real presents, and three generated images verified and presented. Frame 2 had no FG completion, frame 3 reset history, and standard validation reported 0 errors and 0 warnings.

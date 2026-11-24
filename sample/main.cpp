@@ -56,6 +56,8 @@ static bool g_validation=false;
 enum class SdkHandoff { none, sameFamily, crossFamily };
 static SdkHandoff g_sdkHandoff=SdkHandoff::none;
 static bool g_cancelFirstFgResize=false;
+static int g_cancelEvaluateFrame=-1;
+static bool g_cancelledEvaluate=false;
 #endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
@@ -637,6 +639,22 @@ public:
 #endif
       if(g_missingDepthFrame>=0&&inputs.frame.frameIndex==std::uint64_t(g_missingDepthFrame))inputs.frame.depth={};
       directReady=directFG.evaluate(cmd,inputs);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(g_cancelEvaluateFrame>=0&&inputs.frame.frameIndex==uint64_t(g_cancelEvaluateFrame)) {
+        // The producer was submitted on the other queue. Keep its semaphore wait,
+        // but discard the unsubmitted consumer recording before cancelling at the SDK.
+        if(!sdkConsumerCommands)throw std::runtime_error("cancellation needs a separate consumer recording");
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&sdkConsumerCommands);
+        if(!directFG.cancelUnsubmitted(true))
+          throw std::runtime_error("native Evaluate cancellation did not exercise a recording");
+        sdkConsumerCommands=createTempCmdBuffer();
+        cmd=sdkConsumerCommands;
+        directReady=false;
+        g_cancelledEvaluate=true;
+        std::printf("PUBLIC_VULKAN_FG native_evaluate_cancelled=1 source_frame=%llu\n",
+                    static_cast<unsigned long long>(inputs.frame.frameIndex));
+      }
+#endif
     }
     renderOutput(cmd,directReady);
 
@@ -1140,7 +1158,7 @@ private:
         g_cancelFirstFgResize=false;
         // Discard the native recording before releasing the objects it references.
         vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
-        if(!directFG.cancelUnsubmittedResize())
+        if(!directFG.cancelUnsubmitted(false))
           throw std::runtime_error("native resize cancellation did not exercise a recording");
         std::puts("PUBLIC_VULKAN_FG native_resize_cancelled=1");
         cmd=createTempCmdBuffer();
@@ -1272,6 +1290,7 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--sdk-handoff-same"))g_sdkHandoff=SdkHandoff::sameFamily;
     if(!strcmp(argv[i],"--sdk-handoff-cross"))g_sdkHandoff=SdkHandoff::crossFamily;
     if(!strcmp(argv[i],"--sdk-cancel-first-resize"))g_cancelFirstFgResize=true;
+    if(!strcmp(argv[i],"--sdk-cancel-evaluate-frame")&&i+1<argc)g_cancelEvaluateFrame=std::max(0,atoi(argv[++i]));
 #endif
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
@@ -1279,6 +1298,12 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--verify-direct-fg")){g_verifyDirectFG=true;g_frameLimit=24;}
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
   }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  if(g_cancelEvaluateFrame>=0&&(!g_directFG||g_sdkHandoff!=SdkHandoff::sameFamily||g_missingDepthFrame==g_cancelEvaluateFrame)) {
+    std::fputs("Evaluate cancellation requires same-family installed FG and an accepted input frame\n",stderr);
+    return 2;
+  }
+#endif
   g_srOnly=g_srOnly&&!g_verifyFG;
   const bool verifySr=g_srOnly||g_verifyFG;
   try {
@@ -1661,6 +1686,9 @@ int main(int argc, char** argv)
     bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&app.directGeneratedPresents>0&&(!g_verifyDirectFG||app.directFG.verified==app.directGeneratedPresents);
     const unsigned expectedRejections=g_missingDepthFrame>=0&&unsigned(g_missingDepthFrame)<verifiedFrames?1u:0u;
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(g_cancelEvaluateFrame>=0)passed=passed&&g_cancelledEvaluate;
+#endif
     printf("VERIFY_FRAMEINPUTS rejected=%u expected_rejections=%u in_flight=%d\n",app.directFG.rejectedFrames,expectedRejections,int(app.directFG.hasInFlightInputs()));
     printf("VERIFY_DIRECT_FG real_frames=%u evaluations=%u verified=%u real_presents=%u generated_presents=%u errors=%u seconds=%.6f passed=%d\n",verifiedFrames,app.directFG.evaluations,app.directFG.verified,app.directRealPresents,app.directGeneratedPresents,app.directFG.errors,seconds,int(passed));verifyPassed=passed;
   }
