@@ -7,7 +7,8 @@ param(
     [string]$BaselineReadback,
     [ValidateSet('legacy','same-stream','same-family','cross-family')][string]$VulkanSdkProfile='legacy',
     [ValidateSet('all','off','on','missing-depth')][string]$Scenario='all',
-    [switch]$SynchronizationValidation
+    [switch]$SynchronizationValidation,
+    [switch]$VerifyNativeResizeCancellation
 )
 $ErrorActionPreference='Stop'
 $exe=(Get-Item -LiteralPath $Executable).FullName
@@ -31,6 +32,10 @@ $handoffArgs=@(switch ($VulkanSdkProfile) {
     default { @() }
 })
 if ($Scenario -ne 'all') { $cases = @($cases | Where-Object { $_.name -eq $Scenario }) }
+if ($VerifyNativeResizeCancellation) {
+    if ($VulkanSdkProfile -eq 'legacy') { throw 'Native resize cancellation requires the installed VulkanFG client' }
+    $handoffArgs += '--sdk-cancel-first-resize'
+}
 $results=@()
 foreach($case in $cases){
     $caseLogs=Join-Path $logs $case.name
@@ -67,6 +72,9 @@ foreach($case in $cases){
         if(-not $text.Contains('FRAMEINPUTS_REJECTED source_frame=2')){throw 'Missing-depth input was not rejected'}
         if($text.Contains('FRAMEINPUTS_CONSUMED source_frame=2 ')){throw 'Missing-depth frame incorrectly reached NGX'}
         if(-not $text.Contains('FRAMEINPUTS_CONSUMED source_frame=3 generation=1 reset=1')){throw 'No history reset after fallback'}
+    }
+    if($VerifyNativeResizeCancellation -and -not $text.Contains('native_resize_cancelled=1')) {
+        throw "Native resize cancellation was not observed: $stdout"
     }
     if($VulkanSdkProfile -ne 'legacy') {
         if(-not $text.Contains('early_retire_rejected=1 pending_destroy_rejected=1') -or

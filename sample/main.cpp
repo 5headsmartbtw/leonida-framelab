@@ -55,6 +55,7 @@ static bool g_validation=false;
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
 enum class SdkHandoff { none, sameFamily, crossFamily };
 static SdkHandoff g_sdkHandoff=SdkHandoff::none;
+static bool g_cancelFirstFgResize=false;
 #endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
@@ -1135,6 +1136,16 @@ private:
     if(g_directFG){
       auto cmd=createTempCmdBuffer();directFG.resize(cmd,size,g_verifyDirectFG);
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(g_cancelFirstFgResize) {
+        g_cancelFirstFgResize=false;
+        // Discard the native recording before releasing the objects it references.
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
+        if(!directFG.cancelUnsubmittedResize())
+          throw std::runtime_error("native resize cancellation did not exercise a recording");
+        std::puts("PUBLIC_VULKAN_FG native_resize_cancelled=1");
+        cmd=createTempCmdBuffer();
+        directFG.resize(cmd,size,g_verifyDirectFG);
+      }
       NVVK_CHECK(vkEndCommandBuffer(cmd));
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
       submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
@@ -1260,6 +1271,7 @@ int main(int argc, char** argv)
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
     if(!strcmp(argv[i],"--sdk-handoff-same"))g_sdkHandoff=SdkHandoff::sameFamily;
     if(!strcmp(argv[i],"--sdk-handoff-cross"))g_sdkHandoff=SdkHandoff::crossFamily;
+    if(!strcmp(argv[i],"--sdk-cancel-first-resize"))g_cancelFirstFgResize=true;
 #endif
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;

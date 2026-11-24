@@ -69,3 +69,15 @@ The installed client ran on Windows 11 build 26200, RTX 2050 Laptop (SM 8.6, 4 G
 | Regression checks | The rebuilt legacy Vulkan sample passed all three standard GPU cases. Both contract tests and all three installed C/C++ tests passed. The D3D12 client rebuilt against the same DLL, verified 5 generated images and matched the [original D3D12 readback SHA-256](D3D12_FG.md#hardware-evidence). |
 | Queue selection | The RTX 2050 exposed two distinct graphics/compute queues in family 0 for the timeline test. The client reserves the producer before Streamline configures its queues. A device without a suitable topology reports a skip. |
 | Other outstanding checks | Native cancellation and failed submission fault injection, capability-negative hardware, device loss, independent GPU replication, reusable SR dispatch and combined SR + FG. |
+
+## Two-frame NGX SyncVal reproducer
+
+Build the legacy sample and the installed-package sample from the same revision. Keep the validation layers and externally acquired runtime constant. The trace runs both variants with a single command stream and two frames. It omits diagnostic image clears and readback work and counts the validation callbacks between entry to and return from `NGX_VK_EVALUATE_DLSSG`. The script preserves full logs and fails on a validation message.
+
+```powershell
+./tests/trace_ngx_fg.ps1 -InstalledExecutable <installed-consumer-exe> -LegacyExecutable <legacy-exe>
+```
+
+On the RTX 2050 reference runtime, both variants returned `0x1` for each native evaluation and emitted 8 errors / 0 warnings. Each callback was inside an evaluation and named a private NGX image cleared by `vkCmdClearColorImage`. There were no callbacks outside the two evaluation calls. The six-frame workload also reports private buffer fills. That larger workload is required for the actual generated-image readback and the private-buffer diagnostics.
+
+Run the normal installed verification with `-VerifyNativeResizeCancellation` to record native feature creation, discard the Vulkan command buffer before submission, cancel the SDK operation, and then recreate and verify FG. The RTX 2050 same-stream Immediate run recovered with 6 evaluations, 5 verified generated images, the original readback hash and 0 errors / 0 warnings. This exercises recovery from abandoned native creation work. Vulkan queue-submit failure injection and cancellation after recording an Evaluate remain separate coverage.

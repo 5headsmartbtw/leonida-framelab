@@ -7,6 +7,7 @@
 #include <nvsdk_ngx_helpers_dlssg_vk.h>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <cstring>
 #include <filesystem>
@@ -137,7 +138,18 @@ public:
     o.depthInverted=c.depthInverted;o.orthoProjection=c.orthographic;o.motionVectorsInvalidValue=1e30f;
     o.mvecsSubrectSize=o.depthSubrectSize=o.backbufferSubrectSize=o.outputInterpSubrectSize={extent.width,extent.height};
     params->Set(NVSDK_NGX_DLSSG_Parameter_BackbufferFrameID,static_cast<unsigned long long>(f.frameIndex+1));
+    static const bool traceNative = std::getenv("FRAMELAB_TRACE_NGX_FG") != nullptr;
+    if(traceNative) {
+      std::printf("NGX_FG_NATIVE_BEGIN frame=%llu diagnostics=%d\n",
+                  static_cast<unsigned long long>(f.frameIndex),int(checking));
+      std::fflush(stdout);
+    }
     auto r=NGX_VK_EVALUATE_DLSSG(cmd,feature,params,&ep,&o);
+    if(traceNative) {
+      std::printf("NGX_FG_NATIVE_END frame=%llu result=%#x\n",
+                  static_cast<unsigned long long>(f.frameIndex),unsigned(r));
+      std::fflush(stdout);
+    }
     lastNative=r;
     if(!ok(r,"NGX Evaluate failed")){generated=false;sequence.invalidate();}
     else {
