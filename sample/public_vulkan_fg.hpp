@@ -106,13 +106,25 @@ public:
       submit.pSignalSemaphores=&handoff->ready;
       vkcheck(vkQueueSubmit(producerQueue,1,&submit,VK_NULL_HANDLE));
     } else {
-      ++producerTicket;
+      // Odd values are producer-ready. The consumer returns the shared sample resources
+      // with the next even value, after both generated and real-frame reads.
+      const uint64_t reusable=producerTicket?producerTicket+1:0;
+      producerTicket=reusable+1;
+      constexpr VkPipelineStageFlags all=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
       VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+      if(reusable) {
+        timeline.waitSemaphoreValueCount=1;
+        timeline.pWaitSemaphoreValues=&reusable;
+        submit.waitSemaphoreCount=1;
+        submit.pWaitSemaphores=&handoff->ready;
+        submit.pWaitDstStageMask=&all;
+      }
       timeline.signalSemaphoreValueCount=1;
       timeline.pSignalSemaphoreValues=&producerTicket;
       submit.pNext=&timeline;
       submit.pSignalSemaphores=&handoff->ready;
       vkcheck(vkQueueSubmit(producerQueue,1,&submit,VK_NULL_HANDLE));
+      producerNeedsReturn=true;
     }
     external=true;
   }
@@ -261,6 +273,20 @@ public:
     framePending=false;external=false;
   }
 
+  void finishFrame()
+  {
+    if(!producerNeedsReturn)return;
+    const uint64_t reusable=producerTicket+1;
+    const VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+      nullptr,0,nullptr,1,&reusable};
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO,&timeline};
+    submit.signalSemaphoreCount=1;
+    submit.pSignalSemaphores=&handoff->ready;
+    vkcheck(vkQueueSubmit(consumer,1,&submit,VK_NULL_HANDLE));
+    vkcheck(vkQueueWaitIdle(consumer));
+    producerNeedsReturn=false;
+  }
+
   bool hasInFlightInputs() const {return pending;}
 
   void shutdown()
@@ -297,6 +323,7 @@ private:
   unsigned releasedFrameLeases{},releasesBeforeProbe{};
   uint64_t completionTicket{},producerTicket{},pendingFrame{};
   bool pending=false,framePending=false,external=false,checking=false,earlyRetireTest=false;
+  bool producerNeedsReturn=false;
 
   static void check(FrameLabStatus result) {
     if(result!=FRAMELAB_OK)throw std::runtime_error(framelab_status_string(result));

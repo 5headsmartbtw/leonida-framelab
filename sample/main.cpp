@@ -470,16 +470,33 @@ public:
 
     // Scene rendering
     {
+      const auto prepareAttachment=[&](VkImage image,VkImageLayout layout,VkImageAspectFlags aspects){
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+        if(g_directFG&&directFG.willSplit()) {
+          // Discard the previous contents, while still ordering the layout write after
+          // prior producer stores and consumer reads on the reused allocations.
+          VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+          barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+          barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+          barrier.newLayout=layout;
+          barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+          barrier.image=image;
+          barrier.subresourceRange={aspects,0,1,0,1};
+          vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                               0,0,nullptr,0,nullptr,1,&barrier);
+          return;
+        }
+#endif
+        nvvk::cmdBarrierImageLayout(cmd,image,VK_IMAGE_LAYOUT_UNDEFINED,layout,aspects);
+      };
       std::vector<VkImageView> colorImageViews;
       for(uint32_t i = 0; i < std::size(SAMPLE_COLOR_FORMATS); i++)
       {
         colorImageViews.push_back(m_gBuffers->getColorImageView(i));
-        nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(i), VK_IMAGE_LAYOUT_UNDEFINED,
-                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        prepareAttachment(m_gBuffers->getColorImage(i),VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_ASPECT_COLOR_BIT);
       }
-      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                  VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+      prepareAttachment(m_gBuffers->getDepthImage(),VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT);
 
       nvvk::createRenderingInfo renderingInfo({{0, 0}, renderSize}, colorImageViews, m_gBuffers->getDepthImageView(),
                                               VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR);
@@ -761,7 +778,12 @@ public:
     auto submitPresent=[&](bool generated){
       uint32_t i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkResetFences(m_device,1,&m_waitFences[i]));
       VkSemaphore read=m_swapChain.getActiveReadSemaphore(),write=m_swapChain.getActiveWrittenSemaphore();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      // Wait before the first swapchain layout transition in the post command buffer.
+      VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+#else
       VkPipelineStageFlags stage=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+#endif
       VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.waitSemaphoreCount=si.signalSemaphoreCount=si.commandBufferCount=1;si.pWaitSemaphores=&read;si.pWaitDstStageMask=&stage;si.pSignalSemaphores=&write;si.pCommandBuffers=&m_commandBuffers[i];
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
       if(sdkConsumerCommands)si.pCommandBuffers=&sdkConsumerCommands;
@@ -784,11 +806,19 @@ public:
 #endif
     if(directReady){
       bool recreated=false;
-      if(!m_swapChain.acquire(&recreated)||recreated){directFG.enabled=false;++directFG.errors;return;}
+      if(!m_swapChain.acquire(&recreated)||recreated){
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+        directFG.finishFrame();
+#endif
+        directFG.enabled=false;++directFG.errors;return;
+      }
       const auto i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkWaitForFences(m_device,1,&m_waitFences[i],VK_TRUE,30000000000ull));
       VkCommandBuffer cmd=m_commandBuffers[i];NVVK_CHECK(vkResetCommandBuffer(cmd,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
       NVVK_CHECK(vkBeginCommandBuffer(cmd,&bi));renderOutput(cmd,false);NVVK_CHECK(vkEndCommandBuffer(cmd));submitPresent(false);
     }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    directFG.finishFrame();
+#endif
   }
 
   void drawGui()
@@ -1369,8 +1399,6 @@ int main(int argc, char** argv)
     contextInfo.addDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME,false,&directPresentId);
   }
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
-  if(g_directFG&&g_sdkHandoff==SdkHandoff::sameFamily)
-    contextInfo.addRequestedQueue(contextInfo.defaultQueueGCT);
   auto contextOwner=std::shared_ptr<nvvk::Context>(new nvvk::Context,[](auto* context){
     context->deinit();delete context;
   });
@@ -1391,7 +1419,33 @@ int main(int argc, char** argv)
     printf("SAMPLE_VALIDATION_MESSENGER_CREATED\n");
   }
   const auto compatible=context.getCompatibleDevices(contextInfo);
-  if(compatible.empty()||!context.initDevice(compatible[contextInfo.compatibleDeviceIndex],contextInfo))return static_cast<int>(sl::Result::eErrorVulkanAPI);
+  if(compatible.empty())return static_cast<int>(sl::Result::eErrorVulkanAPI);
+  const auto deviceIndex=compatible[contextInfo.compatibleDeviceIndex];
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  bool requestSameFamilyProducer=false;
+  if(g_directFG&&g_sdkHandoff==SdkHandoff::sameFamily) {
+    const auto physical=context.getPhysicalDevices().at(deviceIndex);
+    uint32_t count=0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,nullptr);
+    std::vector<VkQueueFamilyProperties> families(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,families.data());
+    const auto required=contextInfo.defaultQueueGCT;
+    requestSameFamilyProducer=std::any_of(families.begin(),families.end(),[required](const auto& family) {
+      return family.queueCount>=2&&(family.queueFlags&required)==required;
+    });
+    if(requestSameFamilyProducer)contextInfo.addRequestedQueue(required);
+  }
+#endif
+  if(!context.initDevice(deviceIndex,contextInfo))return static_cast<int>(sl::Result::eErrorVulkanAPI);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  // Reserve the requested producer before the optional Streamline queue lookups
+  // consume entries from the same nvpro queue pool.
+  nvvk::Context::Queue sdkProducer{};
+  if(requestSameFamilyProducer)
+    sdkProducer=context.createQueue(contextInfo.defaultQueueGCT,"FrameLab graphics producer");
+  if(g_directFG&&g_sdkHandoff==SdkHandoff::crossFamily)
+    sdkProducer=context.m_queueT;
+#endif
   // Verify that the requested features are actually supported on the created device
   sl::AdapterInfo adapter;
   adapter.vkPhysicalDevice = context.m_physicalDevice;
@@ -1502,9 +1556,7 @@ int main(int argc, char** argv)
   app.directFG.deviceOwner=contextOwner;
   app.directFG.retirementProbeFrame=g_frameLimit?g_frameLimit-1:0;
   if(g_directFG&&g_sdkHandoff!=SdkHandoff::none) {
-    auto producer=g_sdkHandoff==SdkHandoff::sameFamily
-      ?context.createQueue(contextInfo.defaultQueueGCT,"FrameLab graphics producer")
-      :context.m_queueT;
+    const auto& producer=sdkProducer;
     const bool cross=g_sdkHandoff==SdkHandoff::crossFamily;
     if(!producer.queue||producer.queue==context.m_queueGCT.queue||
        cross==(producer.familyIndex==context.m_queueGCT.familyIndex)){
