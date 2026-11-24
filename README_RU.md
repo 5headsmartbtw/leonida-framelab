@@ -79,3 +79,5 @@ GPU sample включается отдельно. Пути к внешним SDK
 Новый код проекта — **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. При использовании сохраняются copyright и текст лицензии. Исходные NVIDIA sample-компоненты сохраняют Apache-2.0; порт из dlssg-open — MIT с оригинальным авторством. См. [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).
 
 Спасибо [nvpro-samples/vk_streamline](https://github.com/nvpro-samples/vk_streamline), [dniminenn/dlssg-open](https://github.com/dniminenn/dlssg-open), разработчикам DLSS/Streamline и участникам Leonida. NVIDIA SDK, DLL, kernels и игровые файлы **не распространяются** в этом репозитории; внешние зависимости получают отдельно на их условиях.
+
+Отдельная благодарность @akimfomin из проекта PortBridge за первое независимое воспроизведение тестов Vulkan handoff на RTX 4070 Ti SUPER.

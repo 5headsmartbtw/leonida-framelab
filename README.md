@@ -88,3 +88,5 @@ The original Streamline Vulkan FG preflight can still report `AdapterUnsupported
 Original project contributions are **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. Keep the copyright and license notice when reusing them. Imported NVIDIA sample portions retain Apache-2.0; the dlssg-open-derived port retains its original MIT attribution. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 Thanks to [nvpro-samples/vk_streamline](https://github.com/nvpro-samples/vk_streamline), [dniminenn/dlssg-open](https://github.com/dniminenn/dlssg-open), the Streamline/DLSS teams and Leonida contributors. NVIDIA SDKs/runtime DLLs/kernels and game files are **not distributed** here. Obtain external dependencies under their own terms.
+
+Special thanks to @akimfomin from PortBridge for independently reproducing our Vulkan handoff tests on an RTX 4070 Ti SUPER.
