@@ -1,5 +1,7 @@
 # Phase 3 — FrameInputs и подготовка Leonida FG
 
+[English](README.en.md)
+
 Проверено 24 ноября 2026. Изменения находятся только в vk_streamline, ветка `experiment/phase3-frame-inputs`, от baseline `a175d35f01a7c172429f79af27b6c6d43704b6b9`. Leonida `8575d36edc479218972497a7bded8651a42856c0` не изменён. Push/PR не выполнялись, бинарные зависимости NVIDIA не распространяются, установленное окружение не менялось.
 
 ## Результат

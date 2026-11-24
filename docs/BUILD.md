@@ -14,13 +14,60 @@ Pass `-DFRAMEINPUTS_VULKAN_INCLUDE=/path/to/Vulkan/Include` to build the additio
 
 ## Windows GPU reference — opt-in
 
-Read [sample/README.md](../sample/README.md) first. Runtime paths are still bound to the original E:/Dev/GTA6 experiment. This is explicitly not yet a general-purpose installation package. Do not install the sample proxy in system directories.
+Use a 64-bit Windows developer environment with MSVC 2022 and CMake 3.20+. Obtain the following dependencies separately under their respective terms.
 
-Acquire separately under their own licenses: MSVC 2022, Vulkan SDK 1.4.363.1, nvpro_core at bc19d6ac3ef62938d0ea0e099735878457ce1b6e, Streamline SDK 2.14.1, NVIDIA/DLSS v310.9.1, and the tested local SM86 dependency with Bundled runtime 310.9.16. No script in this repository downloads these binaries or alters drivers/security settings.
+| Dependency | Tested version or layout |
+| --- | --- |
+| Vulkan SDK | 1.4.363.1 with `glslangValidator` and the Khronos validation layer |
+| [nvpro_core](https://github.com/nvpro-samples/nvpro_core) | `bc19d6ac3ef62938d0ea0e099735878457ce1b6e`, including its submodules |
+| [Streamline SDK](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.1) | 2.14.1, with `include/` and `bin/x64/` |
+| [DLSS SDK](https://github.com/NVIDIA/DLSS/tree/v310.9.1) | v310.9.1, with Vulkan NGX FG headers and the Windows x64 NGX library |
+| GPU runtime | A runtime that reports working support for the chosen backend. The RTX 2050 evidence uses an external SM86 0.4.2 profile with Bundled runtime 310.9.16 and an explicit cubin layer. |
 
-Configure with FRAMELAB_BUILD_SAMPLE=ON, BASE_DIRECTORY pointing to the directory that contains nvpro_core, STREAMLINE_ROOT_DIR and DLSS_NGX_SDK_ROOT. Set VULKAN_SDK as required by the vendor framework. New CMake placement adaptations have not been GPU-revalidated outside the original directory layout; see the published evidence for the exact tested checkout.
+From the repository root, replace these example paths with your SDK locations. Use a writable nvpro_core checkout for its own generated files.
 
-The original GPU runner `tests/run_gpu_checks.ps1 -TaskRoot E:\Dev\GTA6` invokes the validated installation and requires its preserved baseline readback. The script's existence is not a promise that an unconfigured fresh clone can run proprietary GPU components.
+```powershell
+git clone https://github.com/nvpro-samples/nvpro_core.git D:/dependencies/nvpro_core
+git -C D:/dependencies/nvpro_core checkout bc19d6ac3ef62938d0ea0e099735878457ce1b6e
+git -C D:/dependencies/nvpro_core submodule update --init --recursive
+
+$env:VULKAN_SDK = 'D:\SDKs\VulkanSDK'
+cmake -S . -B build-gpu -G 'Visual Studio 17 2022' -A x64 `
+  -DFRAMELAB_BUILD_SAMPLE=ON `
+  '-DBASE_DIRECTORY=D:/dependencies' `
+  '-DSTREAMLINE_ROOT_DIR=D:/SDKs/Streamline' `
+  '-DDLSS_NGX_SDK_ROOT=D:/SDKs/DLSS'
+cmake --build build-gpu --config Release --parallel
+$exe = (Resolve-Path '.\build-gpu\bin\Release\vk_streamline.exe').Path
+```
+
+`BASE_DIRECTORY` is the parent of `nvpro_core/`. CMake generates FrameLab shader headers in the build tree and copies the local Streamline runtime files next to the built sample. Keep these files local.
+
+### Configure the runtime
+
+| Setting | Behavior |
+| --- | --- |
+| `FRAMELAB_NGX_RUNTIME_DIR` | Optional NGX feature search directory. Defaults to the executable's directory. |
+| `FRAMELAB_LOG_DIR` | Optional output directory. Defaults to `framelab-logs` under the working directory. The sample creates `streamline/` and, in Direct NGX mode, `direct/` beneath it. |
+| `FRAMELAB_SM86_PROXY` | Optional explicit path to the existing app-local SM86 library for the historical Direct NGX profile. Keep it with its own private runtime and configuration. The SR-only mode does not load this proxy. |
+| `VK_ADD_LAYER_PATH` or `VK_LAYER_PATH`, plus `VK_INSTANCE_LAYERS` | Standard Vulkan loader variables for locating and enabling an external explicit layer. Point them at your own manifest and layer name if the profile needs one. Include the SDK's validation manifest directory if using `VK_LAYER_PATH`. |
+
+The historical RTX 2050 profile uses `VK_LAYER_DLSSG_OPEN_cubin`, `DLSSG_OPEN_RETARGET_SM=86`, and the external SM86 proxy. These are explicit settings for that profile. The sample leaves device selection and third-party layer settings to the launch environment. Start a normal, non-elevated PowerShell session so the loader can honor explicit layer paths. See the [Khronos loader guide](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md#layer-discovery).
+
+### Run the GPU checks
+
+```powershell
+& $exe --verify-direct-fg --frames 6 --validation --no-vsync
+.\tests\run_gpu_checks.ps1 -Executable $exe -LogRoot .\framelab-logs
+# Optional comparison with a locally retained FrameLab readback
+.\tests\run_gpu_checks.ps1 -Executable $exe -BaselineReadback 'D:\evidence\generated-5.rgba16f'
+```
+
+The runner covers Immediate and FIFO presentation, both with image readback, plus rejection and recovery for an intentionally missing depth input. A different actual present mode is reported as a profile mismatch. Every run gets separate case directories and a `gpu-results.json`. Without an external baseline it still checks the actual generated output and records the image SHA-256. Byte identity is an optional comparison for a matching setup.
+
+Use `& $exe --verify-sr --validation` to reproduce the separate Super Resolution check. The SR-only validation findings, combined SR + FG, and the multi-queue Vulkan consumer are open tasks. See the [sample options](../sample/README.md) and [validation results](phase3/VALIDATION.en.md).
+
+For independent replication, report the FrameLab commit, GPU model, driver, OS build, SDK/runtime and layer versions, exact commands, observed present modes, and the result or first failing step. Share sanitized text and counts in [Coordination](https://github.com/5headsmartbtw/leonida-framelab/issues/4). Device-specific results belong to their tested configuration.
 
 ## Components not built by default
 

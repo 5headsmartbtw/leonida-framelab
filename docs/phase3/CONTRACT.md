@@ -1,5 +1,7 @@
 # FrameInputs: контракт версии Phase 3
 
+[English](CONTRACT.en.md)
+
 Авторитетный новый контракт находится в `vk_streamline/fg/FrameInputs.hpp`. Старый `phase2/FrameInputs.hpp` изучен и оставлен как исторический Vulkan-зависимый проект, без изменения baseline. Общий header требует только стандартную библиотеку C++20. Публичные поля не содержат Vk/D3D/SL/NGX типов или платформенных handles.
 
 ## Общая часть
