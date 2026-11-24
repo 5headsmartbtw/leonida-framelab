@@ -24,6 +24,8 @@ Include `<framelab/vulkan_sr.h>`. The installed package needs Vulkan headers and
 3. Call `framelab_vulkan_sr_record` outside rendering and submit the same command buffer with the SDK completion timeline at a new increasing GPU signal value. Acknowledge that value after successful submission. `framelab_vulkan_sr_retire` reads the real Vulkan timeline before releasing resources. The app also retains any later users. A pending operation prevents destruction.
 4. On rejected metadata, present the raster result and let the next accepted frame reset history. A native recording failure may have emitted commands. Discard the recording before cancel and record fallback into a safe command buffer. Cancel and explicit invalidation reset history.
 
+On `VK_ERROR_DEVICE_LOST`, stop submissions and keep the device and runtime lease. A failed timeline query leaves the packet retained. Once the host has drained the old device and discarded host recordings, call `framelab_vulkan_sr_release_lost_device` and destroy the handle. Then tear down the old runtime and device. Resume with a new device, resources and SR handle, with reset history. The release operation also covers loss observed by the host during submission or a wait. It does not wait on the device or attempt recreation.
+
 ## Reference validation
 
 Build the [synthetic scene](../BUILD.md) separately with `FRAMELAB_USE_INSTALLED_VULKAN_SR=ON` and the installed package in `CMAKE_PREFIX_PATH`. Use `--verify-sdk-sr --validation` for the 120-frame case. Add `--frames 6 --sdk-sr-reject-frame 2` for a missing-depth fallback and reset test. Set `VK_VALIDATION_VALIDATE_SYNC=1` for the separate extended run.
