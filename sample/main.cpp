@@ -57,6 +57,47 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL sampleValidation(VkDebugUtilsMessageSeveri
 static bool g_verifyFG = false;
 static int SAMPLE_WIDTH  = 1920;
 static int SAMPLE_HEIGHT = 1080;
+static std::filesystem::path g_ngxRuntimeDir, g_directLogDir, g_streamlineLogDir;
+
+static std::filesystem::path pathFromEnvironment(const wchar_t* name)
+{
+  const auto size=GetEnvironmentVariableW(name,nullptr,0);
+  if(!size) return {};
+  std::wstring value(size,L'\0');
+  const auto length=GetEnvironmentVariableW(name,value.data(),size);
+  if(!length || length>=size) throw std::runtime_error("Could not read runtime path from the environment");
+  value.resize(length);
+  return std::filesystem::absolute(std::filesystem::path(value));
+}
+
+static void configureRuntime()
+{
+  auto logRoot=pathFromEnvironment(L"FRAMELAB_LOG_DIR");
+  if(logRoot.empty()) logRoot=std::filesystem::current_path() / L"framelab-logs";
+  g_streamlineLogDir=logRoot / L"streamline";
+  std::filesystem::create_directories(g_streamlineLogDir);
+  if(!g_directFG) return;
+
+  g_directLogDir=logRoot / L"direct";
+  std::filesystem::create_directories(g_directLogDir);
+  g_ngxRuntimeDir=pathFromEnvironment(L"FRAMELAB_NGX_RUNTIME_DIR");
+  if(g_ngxRuntimeDir.empty()) {
+    std::wstring executable(32768,L'\0');
+    const auto length=GetModuleFileNameW(nullptr,executable.data(),static_cast<DWORD>(executable.size()));
+    if(!length || length>=executable.size()) throw std::runtime_error("Could not locate the sample executable");
+    executable.resize(length);
+    g_ngxRuntimeDir=std::filesystem::path(executable).parent_path();
+  }
+  if(!std::filesystem::is_directory(g_ngxRuntimeDir))
+    throw std::runtime_error("FRAMELAB_NGX_RUNTIME_DIR must name an existing directory");
+
+  const auto proxyPath=pathFromEnvironment(L"FRAMELAB_SM86_PROXY");
+  if(!proxyPath.empty()) {
+    const HMODULE proxy=LoadLibraryW(proxyPath.c_str());
+    std::printf("SAMPLE_SM86_PROXY loaded=%d error=%lu\n",proxy!=nullptr,proxy?0:GetLastError());
+    if(!proxy) throw std::runtime_error("Could not load the configured FRAMELAB_SM86_PROXY library");
+  }
+}
 
 // Streamline features to enable
 static const sl::Feature SL_FEATURES[] = {
@@ -202,7 +243,7 @@ public:
     if(!g_directFG) slDLSSGSetOptions(m_viewportHandle, m_dlssgOptions);
     slReflexSetOptions(m_reflexOptions);
 
-    if(g_directFG){m_reflexOptions.mode=sl::ReflexMode::eLowLatency;slReflexSetOptions(m_reflexOptions);directFG.initialize(info.instance,info.physicalDevice,info.device,m_queue,m_graphicsQueueIndex);}
+    if(g_directFG){m_reflexOptions.mode=sl::ReflexMode::eLowLatency;slReflexSetOptions(m_reflexOptions);directFG.initialize(info.instance,info.physicalDevice,info.device,m_queue,m_graphicsQueueIndex,g_ngxRuntimeDir,g_directLogDir);}
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(info.device);
     m_alloc = std::make_shared<nvvk::ResourceAllocatorVma>(info.instance, info.device, info.physicalDevice);
 
@@ -1109,25 +1150,13 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
   }
   bool verifySr = !g_directFG && argc>=2 && (!strcmp(argv[1],"--verify-sr")||g_verifyFG);
-  if(g_directFG){
-    std::filesystem::create_directories("E:/Dev/GTA6/logs/fg/sample-direct");
-    const char* layers=getenv("VK_INSTANCE_LAYERS");std::string enabled=layers?layers:"";
-    if(enabled.find("VK_LAYER_DLSSG_OPEN_cubin")==std::string::npos){if(!enabled.empty())enabled+=';';enabled+="VK_LAYER_DLSSG_OPEN_cubin";}
-    if(g_validation&&enabled.find("VK_LAYER_KHRONOS_validation")==std::string::npos)enabled+=";VK_LAYER_KHRONOS_validation";
-    _putenv_s("VK_INSTANCE_LAYERS",enabled.c_str());
-    std::string paths="E:/Dev/GTA6/dlssg-open/native/windows;E:/Dev/GTA6/tools/VulkanSDK/Bin";
-    if(const char* old=getenv("VK_LAYER_PATH")){paths+=';';paths+=old;}
-    _putenv_s("VK_LAYER_PATH",paths.c_str());_putenv_s("VK_LOADER_DRIVERS_SELECT","*nv*");_putenv_s("DLSSG_OPEN_RETARGET_SM","86");_putenv_s("DLSSG_OPEN_LOG_PATH","E:/Dev/GTA6/logs/fg/sample-direct/layer.log");
-    if(!getenv("GTA6_SM86_PROXY"))_wputenv_s(L"GTA6_SM86_PROXY",L"E:\\Dev\\GTA6\\phase2\\run-sm86\\version.dll");
-    SAMPLE_WIDTH=1280;SAMPLE_HEIGHT=720;
+  try {
+    configureRuntime();
+  } catch(const std::exception& error) {
+    std::fprintf(stderr,"FrameLab runtime configuration: %s\n",error.what());
+    return 2;
   }
-  wchar_t proxyPath[32768]{};
-  if(GetEnvironmentVariableW(L"GTA6_SM86_PROXY", proxyPath, 32768)) {
-    HMODULE proxy = LoadLibraryW(proxyPath);
-    std::printf("SAMPLE_SM86_PROXY loaded=%d error=%lu\n", proxy != nullptr, proxy ? 0 : GetLastError());
-    if(!proxy) return 2;
-  }
-  if(verifySr) { SAMPLE_WIDTH = 1280; SAMPLE_HEIGHT = 720; }
+  if(g_directFG || verifySr) { SAMPLE_WIDTH = 1280; SAMPLE_HEIGHT = 720; }
   unsigned verifiedFrames = 0;
   auto seriesStart=std::chrono::steady_clock::now();
   // Setup GLFW window
@@ -1157,7 +1186,7 @@ int main(int argc, char** argv)
   sl::Preferences pref;
   pref.showConsole = false;
   pref.flags = sl::PreferenceFlags::eDisableCLStateTracking; // Pin SDK DLLs: no OTA plugins.
-  pref.pathToLogsAndData = L"E:\\Dev\\GTA6\\logs\\fg\\sample-vulkan";
+  pref.pathToLogsAndData = g_streamlineLogDir.c_str();
   pref.logLevel    = sl::LogLevel::eVerbose;
 #if SL_MANUAL_HOOKING
   pref.flags |= sl::PreferenceFlags::eUseManualHooking;
@@ -1177,7 +1206,10 @@ int main(int argc, char** argv)
 
   nvvk::ContextCreateInfo contextInfo(/* bUseValidation = */ false);
   contextInfo.setVersion(1, 3);
-  if(g_validation)contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  if(g_validation) {
+    contextInfo.addInstanceLayer("VK_LAYER_KHRONOS_validation");
+    contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  }
 
   // Add Vulkan extensions required by GLFW
   {

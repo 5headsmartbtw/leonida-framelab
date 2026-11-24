@@ -2,6 +2,7 @@
 /out/
 /dependencies/
 /runtime/
+/framelab-logs/
 **/_autogen/
 *.exe
 *.dll

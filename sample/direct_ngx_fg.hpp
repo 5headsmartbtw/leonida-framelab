@@ -8,6 +8,7 @@
 #include <array>
 #include <vector>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 
@@ -18,13 +19,17 @@ public:
   unsigned evaluations=0, verified=0, errors=0, rejectedFrames=0;
   const char* status="Initializing";
 
-  void initialize(VkInstance instance,VkPhysicalDevice physical,VkDevice device,VkQueue queue,std::uint32_t queueFamily) {
+  void initialize(VkInstance instance,VkPhysicalDevice physical,VkDevice device,VkQueue queue,
+                  std::uint32_t queueFamily,const std::filesystem::path& runtimeDir,
+                  const std::filesystem::path& outputDir) {
     pd=physical; dev=device;expectedQueue=queue;expectedQueueFamily=queueFamily;
-    const wchar_t* paths[]={L"E:\\Dev\\GTA6\\tools\\Streamline2141\\bin\\x64"};
+    logDirectory=outputDir;
+    logFile=_wfopen((logDirectory / L"ngx.log").c_str(),L"wb");
+    const wchar_t* paths[]={runtimeDir.c_str()};
     NVSDK_NGX_FeatureCommonInfo info{}; info.PathListInfo.Path=paths;info.PathListInfo.Length=1;
     info.LoggingInfo.LoggingCallback=log;info.LoggingInfo.MinimumLoggingLevel=NVSDK_NGX_LOGGING_LEVEL_ON;
     info.LoggingInfo.DisableOtherLoggingSinks=true;
-    auto r=NVSDK_NGX_VULKAN_Init_with_ProjectID("7d4c2f0e-5b1a-4c38-9e61-2f8a6b3d9c10",NVSDK_NGX_ENGINE_TYPE_CUSTOM,"sample.direct.1",L"E:\\Dev\\GTA6\\logs\\fg\\sample-direct",instance,pd,dev,vkGetInstanceProcAddr,vkGetDeviceProcAddr,&info,NVSDK_NGX_Version_API);
+    auto r=NVSDK_NGX_VULKAN_Init_with_ProjectID("7d4c2f0e-5b1a-4c38-9e61-2f8a6b3d9c10",NVSDK_NGX_ENGINE_TYPE_CUSTOM,"sample.direct.1",logDirectory.c_str(),instance,pd,dev,vkGetInstanceProcAddr,vkGetDeviceProcAddr,&info,NVSDK_NGX_Version_API);
     printf("DIRECT_NGX_INIT=%#x\n",unsigned(r));
     if(!ok(r,"NGX initialization failed"))return;
     initialized=true;
@@ -139,7 +144,13 @@ public:
     printf("DIRECT_READBACK frame=%u generated=%d nonfinite=%zu different_current=%zu different_previous=%zu\n",evaluations-1,int(generated),nonfinite,different,differentPrev);
     if(nonfinite||(generated&&(!different||!differentPrev)))fail("FG output verification failed");
     else if(generated)++verified;
-    if(evaluations==6)for(unsigned i=0;i<2;++i){char path[256];sprintf_s(path,"E:/Dev/GTA6/logs/fg/sample-direct/%s-5.rgba16f",i?"input":"generated");FILE*f=fopen(path,"wb");if(f){fwrite(i?cur:out,1,size_t(bytes),f);fclose(f);}}
+    if(evaluations==6) {
+      for(unsigned i=0;i<2;++i) {
+        const auto path=logDirectory / (i ? L"input-5.rgba16f" : L"generated-5.rgba16f");
+        FILE* file=_wfopen(path.c_str(),L"wb");
+        if(file){fwrite(i?cur:out,1,size_t(bytes),file);fclose(file);}
+      }
+    }
     previous.assign(reinterpret_cast<const unsigned char*>(cur),reinterpret_cast<const unsigned char*>(cur)+bytes);
   }
 
@@ -150,8 +161,10 @@ public:
     if(outputView)vkDestroyImageView(dev,outputView,nullptr);if(output)vkDestroyImage(dev,output,nullptr);if(outputMemory)vkFreeMemory(dev,outputMemory,nullptr);
     buffer={};bufferMemory={};output={};outputView={};outputMemory={};previous.clear();generated=false;reset=true;readbackPending=false;inFlightInputs.reset();sequence.invalidate();
   }
-  void shutdown(){releaseImages();if(params){NVSDK_NGX_VULKAN_DestroyParameters(params);params=nullptr;}if(initialized){NVSDK_NGX_VULKAN_Shutdown1(dev);initialized=false;}}
+  void shutdown(){releaseImages();if(params){NVSDK_NGX_VULKAN_DestroyParameters(params);params=nullptr;}if(initialized){NVSDK_NGX_VULKAN_Shutdown1(dev);initialized=false;}if(logFile){fclose(logFile);logFile=nullptr;}}
 private:
+  std::filesystem::path logDirectory;
+  static inline FILE* logFile=nullptr; // The SDK logging callback has no user-data parameter.
   frame_inputs::Sequence sequence;
   std::optional<frame_inputs::FrameInputs> inFlightInputs;
   bool readbackPending=false;std::uint64_t pendingSourceFrame=0;
@@ -160,7 +173,7 @@ private:
   VkImageLayout outputLayout=VK_IMAGE_LAYOUT_UNDEFINED;static constexpr VkFormat format=VK_FORMAT_R16G16B16A16_SFLOAT;
   bool initialized=false,checking=false;NVSDK_NGX_Parameter* params{};NVSDK_NGX_Handle* feature{};std::vector<unsigned char> previous;
   static void NVSDK_CONV log(const char* msg,NVSDK_NGX_Logging_Level,NVSDK_NGX_Feature) {
-    static FILE* file=fopen("E:/Dev/GTA6/logs/fg/sample-direct/ngx.log","wb");if(file){fputs(msg,file);fputc('\n',file);fflush(file);}
+    if(logFile){fputs(msg,logFile);fputc('\n',logFile);fflush(logFile);}
   }
   bool ok(NVSDK_NGX_Result r,const char* why){if(NVSDK_NGX_FAILED(r)){printf("DIRECT_NGX_ERROR=%#x %s\n",unsigned(r),why);fail(why);return false;}return true;}
   void fail(const char* why){++errors;enabled=false;generated=false;status=why;}

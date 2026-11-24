@@ -1,5 +1,7 @@
 # Validation Phase 3
 
+[English](VALIDATION.en.md) · [Актуальная сборка и GPU-тесты](../BUILD.md)
+
 Windows 11 build 26200, RTX 2050 Laptop / SM86, NVIDIA driver 617.14 (nvidia-smi), MSVC 2022. Сохранены Streamline SDK 2.14.1, NVIDIA/DLSS v310.9.1 headers/API 0x15, Bundled DLSS-G runtime 310.9.16, SM86 mod 0.4.2 и существующий Windows cubin layer. Никаких установок/обновлений SDK, драйвера или системных настроек не выполнялось. App-local environment остаётся прежним.
 
 ## CPU
@@ -25,6 +27,8 @@ Windows 11 build 26200, RTX 2050 Laptop / SM86, NVIDIA driver 617.14 (nvidia-smi
 В этой длинной серии нет readback verification каждого кадра, поэтому verified=0 означает отключённый диагностический readback, а не неработающий FG. Проверки изображений выполнены отдельно в bounded tests. API Present counts не являются scanout/latency measurements; FPS gain и input latency в этой фазе не измерялись.
 
 ## Воспроизведение
+
+Ниже зафиксированы исторические команды исходного checkout. Для публичного репозитория используйте [текущую инструкцию](../BUILD.md), где путь к EXE, каталог результатов и необязательный контрольный кадр задаются явно.
 
 ```powershell
 . E:\Dev\GTA6\Enter-Dev.ps1

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.20)
 
 set(PROJECT_NAME vk_streamline)
 project(${PROJECT_NAME})
@@ -10,6 +10,18 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_CXX_STANDARD 20)
 
 set(STREAMLINE_MANUAL_HOOKING ON CACHE BOOL "Use manual hooking method of Streamline instead of linking against the interposer")
+set(STREAMLINE_ROOT_DIR "" CACHE PATH "Streamline SDK root")
+set(DLSS_NGX_SDK_ROOT "" CACHE PATH "DLSS SDK root with NGX FG headers")
+set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
+
+if(NOT EXISTS "${STREAMLINE_ROOT_DIR}/include/sl.h" OR
+   NOT EXISTS "${STREAMLINE_ROOT_DIR}/bin/x64/sl.interposer.dll")
+  message(FATAL_ERROR "Set STREAMLINE_ROOT_DIR to the Streamline SDK with include/ and bin/x64/.")
+endif()
+if(NOT EXISTS "${DLSS_NGX_SDK_ROOT}/include/nvsdk_ngx_helpers_dlssg_vk.h" OR
+   NOT EXISTS "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+  message(FATAL_ERROR "Set DLSS_NGX_SDK_ROOT to the DLSS SDK with Vulkan FG headers and the x64 NGX import library.")
+endif()
 
 #--------------------------------------------------------------------------------------------------
 # look for nvpro_core 1) as a sub-folder 2) at some other locations
@@ -18,25 +30,24 @@ set(STREAMLINE_MANUAL_HOOKING ON CACHE BOOL "Use manual hooking method of Stream
 if(NOT BASE_DIRECTORY)
   find_path(BASE_DIRECTORY
     NAMES nvpro_core/cmake/setup.cmake
-    PATHS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../..
+    PATHS "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../.."
     REQUIRED
     DOC "Directory containing nvpro_core"
     )
 endif()
 
-if(EXISTS ${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-  include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-  include(${BASE_DIRECTORY}/nvpro_core/cmake/utilities.cmake)
+if(EXISTS "${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake")
+  include("${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake")
+  include("${BASE_DIRECTORY}/nvpro_core/cmake/utilities.cmake")
 else()
   message(FATAL_ERROR "could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
 endif()
 
 set(NVPRO_CORE_DIR ${BASE_DIRECTORY}/nvpro_core)
 set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
-set(STREAMLINE_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/streamline CACHE PATH "Path to the Streamline SDK.")
 
 macro(_add_package_Streamline)
-  if(STREAMLINE_ROOT_DIR AND EXISTS ${STREAMLINE_ROOT_DIR})
+  if(STREAMLINE_ROOT_DIR AND EXISTS "${STREAMLINE_ROOT_DIR}")
     set(STREAMLINE_INCLUDE_DIR ${STREAMLINE_ROOT_DIR}/include)
     set(STREAMLINE_LIBRARY ${STREAMLINE_ROOT_DIR}/lib/x64/sl.interposer.lib)
 
@@ -131,27 +142,34 @@ target_link_libraries(${PROJECT_NAME}
 
 _add_project_definitions(${PROJECT_NAME})
 
-compile_glsl(
-  SOURCE_FILES ${SHADER_SOURCE_FILES}
-  HEADER_FILES ${SHADER_HEADER_FILES}
-  DST "${CMAKE_CURRENT_SOURCE_DIR}/_autogen"
-  VULKAN_TARGET "vulkan1.2"
-  HEADER ON
-  DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
-  FLAGS -I${SHADER_DIR} -I${NVPRO_CORE_DIR} -g
+if(NOT EXISTS "${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE}")
+  message(FATAL_ERROR "glslangValidator is required. Set VULKAN_SDK to the Vulkan SDK root.")
+endif()
+set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_autogen")
+foreach(shader IN LISTS SHADER_SOURCE_FILES)
+  get_filename_component(filename "${shader}" NAME)
+  string(REPLACE "." "_" symbol "${filename}")
+  set(header "${SHADER_OUTPUT_DIR}/${filename}.h")
+  add_custom_command(
+    OUTPUT "${header}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_OUTPUT_DIR}"
+    COMMAND "${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE}" -g --target-env vulkan1.2
+            "-I${SHADER_DIR}" "-I${NVPRO_CORE_DIR}" --vn "${symbol}" -o "${header}" "${shader}"
+    DEPENDS "${shader}" ${SHADER_HEADER_FILES}
+    VERBATIM
   )
+  target_sources(${PROJECT_NAME} PRIVATE "${header}")
+endforeach()
 
 _finalize_target(${PROJECT_NAME})
 _copy_files_to_target(${PROJECT_NAME} "${STREAMLINE_DLLS}")
 install(FILES ${STREAMLINE_DLLS} CONFIGURATIONS Release DESTINATION bin_${ARCH})
 install(FILES ${STREAMLINE_DLLS} CONFIGURATIONS Debug DESTINATION bin_${ARCH}_debug)
 
-# Independent direct-NGX backend for the local SM86 sample branch.
-set(DLSS_NGX_SDK_ROOT "E:/Dev/GTA6/DLSS-sdk" CACHE PATH "Official DLSS SDK with NGX FG headers")
+# Independent direct-NGX backend.
 target_include_directories(${PROJECT_NAME} BEFORE PRIVATE "${DLSS_NGX_SDK_ROOT}/include")
 target_link_libraries(${PROJECT_NAME} "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" shlwapi advapi32)
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
-target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-set_target_properties(${PROJECT_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_BINARY_DIR}")

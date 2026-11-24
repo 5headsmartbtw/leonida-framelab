@@ -1,5 +1,7 @@
 # Конкретный план дальнейшего подключения Leonida
 
+[English](INTEGRATION_PLAN.en.md)
+
 Этот план не исполняется в Phase 3. Backend Leonida остаётся без изменений. Критерий перехода — подтверждённые данные и completion/lifetime, а не успех capability query.
 
 1. **Довести независимый consumer до реальной handoff-синхронизации.** Реализовать timeline/binary wait path и необходимые queue-family acquire/release на synthetic multi-queue harness. IDs разрешать через авторитетные Vulkan allocations и semaphores, не через касты случайных значений. Тесты: разные command buffers/queues/families, failed submit, reuse, cancelled frame, repeated resize, resource release до/после fence. Сейчас эти случаи fail closed. Это нужно сделать до изменения Leonida, потому что same-command-buffer profile sample не соответствует отдельному producer replay и presenter recording.

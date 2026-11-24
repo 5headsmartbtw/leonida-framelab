@@ -1,5 +1,5 @@
 <p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
-<p align="center"><strong>Разобраться в кадре. Сгенерировать. Проверить результат.</strong></p>
+<p align="center"><strong>Стенд для проверки DLSS Frame Generation, Super Resolution и контракта FrameInputs на Windows.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Сборка</a> · <a href="docs/phase3/VALIDATION.md">Проверки</a> · <a href="docs/ROADMAP.md">План</a></p>
 
 Хотите помочь? Прочитайте [правила участия](CONTRIBUTING_RU.md) и [выберите задачу в Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
@@ -18,7 +18,7 @@
 |---|---|---|
 | Direct NGX FG / D3D12 | Создание feature, Evaluate, readback и real/generated Present на RTX 2050 | Самостоятельная синтетическая сцена |
 | Direct NGX FG / Windows Vulkan | Рабочий 2X на собственной анимированной 3D-сцене sample | Внешний SM86-мод и экспериментальный Vulkan layer |
-| DLSS Super Resolution / Streamline | 120 успешных Evaluate в ранней SR-проверке | Отдельный режим; SR и direct FG вместе ещё не проверены |
+| DLSS Super Resolution / Streamline | 120 успешных Evaluate | Vulkan validation выявила ошибки в режиме SR. Совместный SR + FG не проверен |
 | FrameInputs Phase 3 | 59 проверок, побайтное совпадение контрольного кадра, fallback при missing depth | GPU consumer пока только Vulkan и один command stream |
 | VSync, resize и переключатель FG | Immediate↔FIFO, resize до 1920×1009, выключение/включение FG; validation 0/0 | Present API — не измерение физического показа или задержки |
 | Интеграция Leonida | Аудит pipeline и конкретный план | Семантика игровых входов, lifetime и completion seam ещё не готовы |
@@ -43,7 +43,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 Для общего контракта достаточно CMake и компилятора C++20. Vulkan binding tests добавятся при наличии заголовков SDK либо параметра `-DFRAMEINPUTS_VULKAN_INCLUDE=/путь/к/Vulkan/Include`. GPU, игра и NVIDIA SDK для обычной сборки тестов не нужны.
 
-GPU sample включается отдельно и пока сохраняет пути исходного валидированного стенда. Это ещё не переносимый установщик: см. [BUILD.md](docs/BUILD.md) и [sample/README.md](sample/README.md). Переносимость runtime paths вынесена в roadmap.
+GPU sample включается отдельно. Пути к внешним SDK и runtime задаются при сборке и запуске. Скрипт тестов принимает явный путь к EXE и создаёт папку логов для каждого запуска. См. [сборку и воспроизведение](docs/BUILD.md).
 
 ## Доказательства работы
 
