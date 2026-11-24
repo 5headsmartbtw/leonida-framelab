@@ -8,7 +8,7 @@
 
 Ядро SDK устанавливает C ABI для проверки входов FG, последовательности кадров и удержания ресурсов. Внешний проект на C или C++ подключает статическую или динамическую библиотеку через `FrameLab::FrameLab`. Для заголовка и обычной сборки не нужны GPU SDK или игровой рантайм. См. [сборку SDK и жизненный цикл](docs/sdk/README.md) и [критерии экспериментального релиза](docs/sdk/RELEASE_CHECKLIST.md).
 
-Опциональный [компонент D3D12 FG](docs/sdk/D3D12_FG.md) записывает реальные команды NGX из внешнего приложения и удерживает ресурсы до завершения fence. Vulkan FG и Streamline SR пока проверяются отдельно в тестовой сцене.
+Опциональные компоненты [D3D12 FG](docs/sdk/D3D12_FG.md) и [Vulkan FG](docs/sdk/VULKAN_FG.md) позволяют внешнему приложению записывать команды Direct NGX и удерживают входные ресурсы до подтверждённого завершения GPU. Streamline SR доступен в тестовой сцене.
 
 ## Как устроен стенд?
 
@@ -23,9 +23,9 @@
 | Направление | Результат | Граница проверки |
 |---|---|---|
 | Direct NGX FG / D3D12 | Создание feature, Evaluate, readback и real/generated Present на RTX 2050 | Самостоятельная синтетическая сцена |
-| Direct NGX FG / Windows Vulkan | Рабочий 2X на собственной анимированной 3D-сцене sample | Внешний SM86-мод и экспериментальный Vulkan layer |
+| Direct NGX FG / Windows Vulkan | Установленный SDK воспроизвёл эталонный кадр в одном потоке команд и при передаче между семействами очередей | RTX 2050, внешний SM86-рантайм, открытая проверка синхронизации |
 | DLSS Super Resolution / Streamline | 120 успешных Evaluate, Vulkan validation 0/0 на RTX 2050 | Совместный SR + FG не проверен |
-| FrameInputs Phase 3 | 59 проверок, побайтное совпадение контрольного кадра, fallback при missing depth | GPU consumer пока только Vulkan и один command stream |
+| FrameInputs Phase 3 | 59 проверок, побайтное совпадение контрольного кадра, fallback при missing depth | Исходные проверки Phase 3 охватывают один поток команд Vulkan |
 | VSync, resize и переключатель FG | Immediate↔FIFO, resize до 1920×1009, выключение/включение FG; validation 0/0 | Present API — не измерение физического показа или задержки |
 | Интеграция Leonida | Аудит pipeline и конкретный план | Семантика игровых входов, lifetime и completion seam ещё не готовы |
 

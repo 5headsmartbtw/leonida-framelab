@@ -1,0 +1,66 @@
+# Installed Vulkan Frame Generation
+
+`VulkanFG` is the experimental Direct NGX component of FrameLab for Windows x64. It accepts a native Vulkan device, the public FrameInputs descriptor, and native image bindings. It records commands into an application-owned command buffer. The application owns queue submission, swapchain, and ordinary presentation.
+
+## Build and consume
+
+```powershell
+cmake -S . -B build -A x64 -DBUILD_SHARED_LIBS=ON -DFRAMELAB_BUILD_VULKAN_FG=ON "-DDLSS_NGX_SDK_ROOT=<external DLSS SDK>"
+cmake --build build --config Release
+cmake --install build --config Release --prefix "<FrameLab install prefix>"
+```
+
+Install the Vulkan SDK and make it discoverable by CMake. Obtain the NVIDIA headers, link library, and runtime separately. The installed client needs the Vulkan SDK and the FrameLab package. It does not compile against NVIDIA headers or link against the NGX import library directly.
+
+```cmake
+find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED COMPONENTS VulkanFG)
+target_link_libraries(client PRIVATE FrameLab::FrameLab)
+```
+
+Include `<framelab/vulkan_fg.h>`. The same shared package can include [D3D12FG](D3D12_FG.md). The default static and shared core builds work without either GPU component.
+
+## Resource and queue contract
+
+- Create a Vulkan 1.2 or later device with timeline semaphores enabled and supply a graphics/compute queue. Enable the runtime's required extensions before creating the device. The Windows reference sample enables `VK_NVX_binary_import`, `VK_NVX_image_view_handle`, `VK_KHR_push_descriptor`, `VK_KHR_external_memory_win32`, and `VK_KHR_external_semaphore_win32`. Pass existing wide-character runtime and log directories, an application project identity, and a lease on the actual Vulkan device owner. Query NGX initialization and capability through the optional report callback during create. An absent capability or failed native call leaves application presentation in charge. Serialize handle and queue access. The experimental component supports one active Vulkan FG handle per process.
+- Supply equal render/output extents and native single-sample, single-mip, single-layer 2D images. Use `R16G16B16A16_SFLOAT` color in shader-read layout, a depth-only `D24_UNORM_S8_UINT` view in depth/stencil attachment layout, and `R16G16_SFLOAT` motion vectors in color-attachment layout. Color must support storage and transfer source usage as well as sampling. Depth and motion require the sampled usage used by the shader-readable NGX views. The host supplies FrameInputs camera transforms, pixel jitter, motion scale, resource and queue identities, monotonic frame indices, and explicit history resets at scene breaks. The reference profile uses Y-down, Z `[0, 1]` projection and Y-up, Z `[0, 1]` reprojection. Keep the actual allocations, views, and synchronization primitives alive via the C leases.
+- For same-command-stream input, identify the same recording in the public descriptor and in both command-buffer fields. For split submissions, supply a real producer semaphore and signal operation, lease it, and match the stable semaphore identity in both descriptors. Use a binary semaphore with value zero or a timeline semaphore with the recorded producer value. For different queue families, supply exclusive images with matching producer release barriers after their final producer access. Each release keeps the declared layout, covers mip 0/layer 0 and both depth/stencil aspects for the packed depth image, and transfers ownership to the configured consumer family. FrameLab records the corresponding acquire. The declared layouts are restored after NGX. The consumer family owns the images on return. The host must transfer them back before a later use on a different family.
+- Set the versioned structs' `abi_version` and `struct_size`. Record feature creation with `framelab_vulkan_fg_record_resize`, then follow the submit/retire sequence below before using it. Before recording a resize or destroying the idle handle, drain every other GPU user of the old output and invalidate host descriptors that reference it. Passing diagnostics enables synchronous readback work for the synthetic verification profile.
+
+## Recording and completion
+
+1. Record FG with `framelab_vulkan_fg_record` outside a render pass. `out_generated == 0` on a successful call means the source frame can still be committed to temporal history, even though there is no generated frame to present. A generated output comes from `framelab_vulkan_fg_output` and is borrowed in shader-read layout. Keep later consumer uses ordered and complete before overwrite, resize or destruction.
+2. Get `framelab_vulkan_fg_submission`. Submit the recording on the configured queue, with the provided producer wait if present, and signal its completion timeline at a new strictly increasing positive value below `UINT64_MAX`. When using `vkQueueSubmit`, include matching wait and signal arrays in `VkTimelineSemaphoreSubmitInfo`. Signal only from the GPU submission that covers the recorded work. The SDK owns that semaphore. After the queue accepts the work, call `framelab_vulkan_fg_mark_submitted` with the same value.
+3. Call `framelab_vulkan_fg_retire`. It reads the actual device timeline and returns `FRAMELAB_NOT_READY` while the value is pending. There is one outstanding operation per handle. A pending handle returns `FRAMELAB_BUSY` on destruction. An acknowledged device loss ends this component's GPU work. Recreate the device and backend before attempting FG again.
+4. Rejected input takes the real-frame path. An input rejected before recording leaves the command buffer usable. The application still handles any already-submitted producer waits and ownership transfers on that path. A native failure after recording starts can leave partial commands. Discard the affected command recording, call `framelab_vulkan_fg_cancel` if an operation is pending, and use separate ordinary presentation commands. Cancel an intentionally abandoned recording only after it cannot be submitted. Invalidate temporal history after an idle-frame discontinuity. Treat native feature errors as a reason to fall back and reinitialize.
+
+## Reference consumer and verification
+
+Build the synthetic sample against the installed package. The sample consumes the Vulkan C ABI and owns the fallback, VSync controls, and present loop. See the [reference sample build](../BUILD.md) for how to supply the independently acquired runtime and sample dependencies.
+
+```powershell
+cmake -S sample -B client-build -A x64 -DFRAMELAB_USE_INSTALLED_VULKAN_FG=ON `
+  "-DCMAKE_PREFIX_PATH=<FrameLab install prefix>" `
+  "-DBASE_DIRECTORY=<parent directory of nvpro_core>" `
+  "-DSTREAMLINE_ROOT_DIR=<external Streamline SDK>"
+cmake --build client-build --config Release
+$exe = "./client-build/bin/Release/vk_streamline.exe"
+$baseline = "<local legacy control run>/direct/generated-5.rgba16f"
+foreach ($profile in 'same-stream','cross-family','same-family') {
+  ./tests/run_gpu_checks.ps1 -Executable $exe -BaselineReadback $baseline -VulkanSdkProfile $profile
+  ./tests/run_gpu_checks.ps1 -Executable $exe -BaselineReadback $baseline -VulkanSdkProfile $profile -SynchronizationValidation
+}
+```
+
+Supply a legacy baseline generated on the same runtime profile for byte comparison. Preserve the runner's logs when reporting failure. Missing queue topology is reported as skipped.
+
+The installed client ran on Windows 11 build 26200, RTX 2050 Laptop (SM 8.6, 4 GB), NVIDIA driver 617.14, MSVC 2022, Vulkan SDK/layers 1.4.363.1, Streamline 2.14.1 and DLSS SDK v310.9.1. It reused the separately supplied SM86 0.4.2/Bundled runtime 310.9.16 and Windows layer from the [Phase 3 reference profile](../phase3/VALIDATION.en.md). NGX returned success (`0x1`) from initialization and feature creation, and availability reported `1`.
+
+| Local check | Result |
+| --- | --- |
+| Same command stream and cross-family binary handoff, Immediate and FIFO | Each of four runs evaluated 6 source frames, verified and presented 5 generated images, and logged 0 errors / 0 warnings under standard Vulkan validation. |
+| Missing depth with either topology | 5 evaluations, 3 verified generated images, 6 real presents, 1 expected rejection, and 0 errors / 0 warnings in each run. Frame 2 bypassed NGX and frame 3 reset history. |
+| Readback and GPU ownership | Both topologies matched the legacy control SHA-256 `caa4a0256f6920a8fc596fc414680d9544b72abff5c7f6e3c148a6d6924d96a2`. The final gated submit refused early retirement and destruction. The actual GPU signal preceded the final lease release. |
+| Live FIFO resize | Recreated NGX at 1008×601 after starting at 1280×720. Exit 0, 0 errors / 0 warnings and empty stderr. Readback disabled for the live run. |
+| Extended synchronization validation | Failed with 10 errors / 0 warnings in the first control case on each exercised topology. The preserved legacy sample reproduced the same count and reported write-after-write hazards in `vkCmdClearColorImage` and `vkCmdFillBuffer` on private `nv.ngx.dlssg.resource` objects. No diagnostics were suppressed by FrameLab. The runner stopped before FIFO and missing-depth in each extended run. |
+| Separate queues, same family | Skipped. The reference device did not expose the requested second graphics/compute queue. The standalone handoff test covers that topology separately. |
+| Other outstanding checks | Native cancellation and failed submission fault injection, capability-negative hardware, device loss, independent GPU replication, reusable SR dispatch and combined SR + FG. |

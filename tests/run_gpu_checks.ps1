@@ -4,7 +4,9 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
     [string]$LogRoot = (Join-Path (Get-Location) 'framelab-logs'),
-    [string]$BaselineReadback
+    [string]$BaselineReadback,
+    [ValidateSet('legacy','same-stream','same-family','cross-family')][string]$VulkanSdkProfile='legacy',
+    [switch]$SynchronizationValidation
 )
 $ErrorActionPreference='Stop'
 $exe=(Get-Item -LiteralPath $Executable).FullName
@@ -22,17 +24,25 @@ $cases=@(
     @{name='on';args=@('--verify-direct-fg','--frames','6','--validation','--vsync');evaluations=6;generated=5;rejected=0;mode='FIFO'},
     @{name='missing-depth';args=@('--verify-direct-fg','--frames','6','--validation','--no-vsync','--test-missing-depth-frame','2');evaluations=5;generated=3;rejected=1;mode='Immediate'}
 )
+$handoffArgs=@(switch ($VulkanSdkProfile) {
+    'same-family' { @('--sdk-handoff-same') }
+    'cross-family' { @('--sdk-handoff-cross') }
+    default { @() }
+})
 $results=@()
 foreach($case in $cases){
     $caseLogs=Join-Path $logs $case.name
     New-Item -ItemType Directory -Path $caseLogs | Out-Null
     $stdout=Join-Path $caseLogs 'stdout.log';$stderr=Join-Path $caseLogs 'stderr.log'
     $previousLogDir=$env:FRAMELAB_LOG_DIR
+    $previousSync=$env:VK_VALIDATION_VALIDATE_SYNC
     try {
         $env:FRAMELAB_LOG_DIR=$caseLogs
-        $run=Start-Process -FilePath $exe -ArgumentList $case.args -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if ($SynchronizationValidation) { $env:VK_VALIDATION_VALIDATE_SYNC='1' }
+        $run=Start-Process -FilePath $exe -ArgumentList ($case.args + $handoffArgs) -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     } finally {
         $env:FRAMELAB_LOG_DIR=$previousLogDir
+        $env:VK_VALIDATION_VALIDATE_SYNC=$previousSync
     }
     if(-not $run.WaitForExit(60000)){$run.Kill();$run.WaitForExit();throw "Timeout: $($case.name)"}
     $run.WaitForExit() # Drain redirected output after the bounded process wait.
@@ -40,6 +50,10 @@ foreach($case in $cases){
     for($attempt=0;$attempt -lt 20 -and -not $text.Contains('SAMPLE_VALIDATION_SUMMARY');++$attempt){
         Start-Sleep -Milliseconds 50
         $text=[string](Get-Content -LiteralPath $stdout -Raw)
+    }
+    if($run.ExitCode -eq 77 -and $VulkanSdkProfile -in @('same-family','cross-family') -and $text.Contains('requested producer queue topology is unavailable')) {
+        Write-Output "SKIP Vulkan SDK profile ${VulkanSdkProfile}: requested producer queue topology is unavailable"
+        return
     }
     if($run.ExitCode -ne 0){throw "Nonzero exit: $($case.name). See $stdout"}
     if((Get-Item -LiteralPath $stderr).Length -ne 0){throw "Validation stderr was not empty: $stderr"}
@@ -52,7 +66,26 @@ foreach($case in $cases){
         if($text.Contains('FRAMEINPUTS_CONSUMED source_frame=2 ')){throw 'Missing-depth frame incorrectly reached NGX'}
         if(-not $text.Contains('FRAMEINPUTS_CONSUMED source_frame=3 generation=1 reset=1')){throw 'No history reset after fallback'}
     }
+    if($VulkanSdkProfile -ne 'legacy') {
+        if(-not $text.Contains('early_retire_rejected=1 pending_destroy_rejected=1') -or
+           -not $text.Contains('final_lease_released_after_gpu=1')) {
+            throw "Installed SDK completion/lease proof missing: $stdout"
+        }
+        if($VulkanSdkProfile -eq 'same-family' -and -not $text.Contains('mode=timeline_same_family')) {
+            throw "Same-family execution not observed: $stdout"
+        }
+        if($VulkanSdkProfile -eq 'cross-family' -and -not $text.Contains('mode=binary_cross_family')) {
+            throw "Cross-family execution not observed: $stdout"
+        }
+    }
     $row=[ordered]@{name=$case.name;exit_code=$run.ExitCode;evaluations=$case.evaluations;verified=$case.generated;real_presents=6;generated_presents=$case.generated;input_rejections=$case.rejected;validation_errors=0;validation_warnings=0;stderr_bytes=0}
+    if($VulkanSdkProfile -ne 'legacy'){
+        $row.sdk_profile=$VulkanSdkProfile
+        $row.early_retire_rejected=$true
+        $row.pending_destroy_rejected=$true
+        $row.final_lease_released_after_gpu=$true
+    }
+    if($SynchronizationValidation){$row.synchronization_validation=$true}
     if($case.name -ne 'missing-depth'){
         $current=Join-Path $caseLogs 'direct\generated-5.rgba16f'
         if ((Get-Item -LiteralPath $current).Length -ne (1280*720*8)) { throw "Unexpected readback size: $current" }
