@@ -24,7 +24,7 @@
 |---|---|---|
 | Direct NGX FG / D3D12 | Создание feature, Evaluate, readback и real/generated Present на RTX 2050 | Самостоятельная синтетическая сцена |
 | Direct NGX FG / Windows Vulkan | Рабочий 2X на собственной анимированной 3D-сцене sample | Внешний SM86-мод и экспериментальный Vulkan layer |
-| DLSS Super Resolution / Streamline | 120 успешных Evaluate | Vulkan validation выявила ошибки в режиме SR. Совместный SR + FG не проверен |
+| DLSS Super Resolution / Streamline | 120 успешных Evaluate, Vulkan validation 0/0 на RTX 2050 | Совместный SR + FG не проверен |
 | FrameInputs Phase 3 | 59 проверок, побайтное совпадение контрольного кадра, fallback при missing depth | GPU consumer пока только Vulkan и один command stream |
 | VSync, resize и переключатель FG | Immediate↔FIFO, resize до 1920×1009, выключение/включение FG; validation 0/0 | Present API — не измерение физического показа или задержки |
 | Интеграция Leonida | Аудит pipeline и конкретный план | Семантика игровых входов, lifetime и completion seam ещё не готовы |

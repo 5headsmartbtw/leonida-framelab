@@ -30,4 +30,4 @@ On the same RTX 2050, a fresh CMake build on C: with spaces in its output path u
 
 A separate live run recreated the FG feature after resize from 1280×720 to 1008×601. It completed 300 real Present calls, 300 evaluations and 297 generated Present calls with zero validation errors or warnings and zero remaining leases. Image readback was disabled in that live run.
 
-The separate Streamline SR check completed 120 successful evaluations, but the Vulkan validation run failed with 26 errors. Reported errors covered device extension/feature setup, dynamic rendering attachments and reuse of a presentation semaphore. Fix the SR validation baseline before testing a combined SR + FG path.
+The separate Streamline SR check completed 120 successful evaluations, but the Vulkan validation run failed with 26 errors. Reported errors covered device extension/feature setup, dynamic rendering attachments and reuse of a presentation semaphore. The later [SR-only correction](../evidence/sr-only-rtx2050.md) passed the same validation check. The combined SR + FG path remains unverified.

@@ -65,7 +65,7 @@ The historical RTX 2050 profile uses `VK_LAYER_DLSSG_OPEN_cubin`, `DLSSG_OPEN_RE
 
 The runner covers Immediate and FIFO presentation, both with image readback, plus rejection and recovery for an intentionally missing depth input. A different actual present mode is reported as a profile mismatch. Every run gets separate case directories and a `gpu-results.json`. Without an external baseline it still checks the actual generated output and records the image SHA-256. Byte identity is an optional comparison for a matching setup.
 
-Use `& $exe --verify-sr --validation` to reproduce the separate Super Resolution check. The SR-only validation findings, combined SR + FG, and the multi-queue Vulkan consumer are open tasks. See the [sample options](../sample/README.md) and [validation results](phase3/VALIDATION.en.md).
+Use `& $exe --verify-sr --validation` to reproduce the [separate Super Resolution check](evidence/sr-only-rtx2050.md). Combined SR + FG and the multi-queue Vulkan consumer are open tasks. See the [sample options](../sample/README.md) and [validation results](phase3/VALIDATION.en.md).
 
 For independent replication, report the FrameLab commit, GPU model, driver, OS build, SDK/runtime and layer versions, exact commands, observed present modes, and the result or first failing step. Share sanitized text and counts in [Coordination](https://github.com/5headsmartbtw/leonida-framelab/issues/4). Device-specific results belong to their tested configuration.
 
