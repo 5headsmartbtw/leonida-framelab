@@ -9,7 +9,7 @@ Want to help? See the [contribution rules](CONTRIBUTING.md) and [claim a task in
 
 The SDK core installs a C ABI for FG input validation, frame sequencing and resource leases. Build it as a static or shared library and link from an external C/C++ project with `FrameLab::FrameLab`. The public header and default build use no game or GPU SDK headers. See [SDK setup and lifecycle](docs/sdk/README.md) and the [experimental release checklist](docs/sdk/RELEASE_CHECKLIST.md).
 
-The current package exposes the input/lifetime contract. Direct NGX FG and Streamline SR remain independently exercised in the optional native sample while reusable dispatch modules are extracted.
+The optional [D3D12 FG component](docs/sdk/D3D12_FG.md) records real NGX work from an external app and retains resources through its completion fence. Native Vulkan FG and Streamline SR are still exercised separately in the reference sample.
 
 ## What is the testbed?
 

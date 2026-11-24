@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <framelab/framelab.h>
 
-#include "FrameInputs.hpp"
+#include "fg_stream_internal.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -28,6 +28,11 @@ struct FrameLabFgStream {
     std::optional<fi::FrameInputs> frame;
     bool submitted = false;
 };
+
+const fi::FrameInputs* framelab::detail::preparedInputs(const FrameLabFgStream* stream) noexcept
+{
+    return stream && stream->frame ? &*stream->frame : nullptr;
+}
 
 namespace {
 FrameLabStatus statusFor(fi::Error error)
@@ -166,6 +171,8 @@ const char* FRAMELAB_CALL framelab_status_string(FrameLabStatus status)
     case FRAMELAB_BUSY: return "stream has an outstanding frame";
     case FRAMELAB_INVALID_PHASE: return "invalid frame lifecycle phase";
     case FRAMELAB_OUT_OF_MEMORY: return "out of memory";
+    case FRAMELAB_NATIVE_FAILURE: return "native backend operation failed";
+    case FRAMELAB_NOT_READY: return "GPU completion not observed";
     default: return "unknown status";
     }
 }

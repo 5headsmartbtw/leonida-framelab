@@ -17,6 +17,23 @@ if(framelab_type STREQUAL "SHARED_LIBRARY")
   set_target_properties(FrameLab PROPERTIES VERSION "${PROJECT_VERSION}" SOVERSION 1)
 endif()
 
+option(FRAMELAB_BUILD_D3D12_FG "Build the Windows Direct NGX FG module (external SDK)" OFF)
+if(FRAMELAB_BUILD_D3D12_FG)
+  if(NOT WIN32 OR NOT BUILD_SHARED_LIBS OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "FRAMELAB_BUILD_D3D12_FG requires a 64-bit Windows shared build.")
+  endif()
+  set(DLSS_NGX_SDK_ROOT "" CACHE PATH "DLSS SDK root with D3D12 NGX FG headers")
+  set(framelab_ngx_d3d12_library "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+  if(NOT EXISTS "${framelab_ngx_d3d12_library}" OR
+     NOT EXISTS "${DLSS_NGX_SDK_ROOT}/include/nvsdk_ngx_helpers_dlssg_d3d.h")
+    message(FATAL_ERROR "Set DLSS_NGX_SDK_ROOT to the external DLSS SDK with D3D12 NGX headers and x64 library.")
+  endif()
+  target_sources(FrameLab PRIVATE src/backends/d3d12/ngx_fg.cpp)
+  target_include_directories(FrameLab PRIVATE "${DLSS_NGX_SDK_ROOT}/include")
+  target_link_libraries(FrameLab PRIVATE "${framelab_ngx_d3d12_library}" d3d12 dxgi shlwapi advapi32 psapi user32)
+  install(FILES include/framelab/d3d12_fg.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/framelab")
+endif()
+
 set(framelab_package_dir "${CMAKE_INSTALL_LIBDIR}/cmake/FrameLab")
 configure_package_config_file(cmake/FrameLabConfig.cmake.in
   "${PROJECT_BINARY_DIR}/FrameLabConfig.cmake" INSTALL_DESTINATION "${framelab_package_dir}")
@@ -24,7 +41,7 @@ write_basic_package_version_file("${PROJECT_BINARY_DIR}/FrameLabConfigVersion.cm
   VERSION "${PROJECT_VERSION}" COMPATIBILITY ExactVersion)
 
 install(TARGETS FrameLab EXPORT FrameLabTargets)
-install(DIRECTORY include/framelab DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(FILES include/framelab/framelab.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/framelab")
 install(EXPORT FrameLabTargets NAMESPACE FrameLab:: DESTINATION "${framelab_package_dir}")
 install(FILES "${PROJECT_BINARY_DIR}/FrameLabConfig.cmake" "${PROJECT_BINARY_DIR}/FrameLabConfigVersion.cmake"
   DESTINATION "${framelab_package_dir}")

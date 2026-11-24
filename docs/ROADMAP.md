@@ -6,15 +6,15 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 
 | Workstream | Priority | Implementation boundary |
 | --- | --- | --- |
-| SDK-01 | P0 | Public C ABI, FG metadata validation and submission lifecycle first. Extract independently callable native FG and SR dispatch next. |
+| SDK-01 | P0 | The public ABI and [D3D12 FG dispatch](sdk/D3D12_FG.md) are verified. Extract public Vulkan FG and independent SR dispatch next. |
 | SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumers pass on Windows and Linux. |
 | SR-01 | P0 | SR-only passed Vulkan validation on the reference RTX 2050. Extract reusable SR dispatch from this profile. |
-| D3D-01 | P0 | The [D3D12 reference](../experiments/d3d12/FRAME_INPUTS.md) passed fence, readback and stale-depth checks. Native public dispatch is still open. |
+| D3D-01 | P0 | The installed [public D3D12 FG component](sdk/D3D12_FG.md) passed the external consumer, real fence/lifetime checks and matched the old readback. |
 | VK-01 | P1 | The [standalone image handoff](../tests/vulkan-handoff/README.md) verified binary and timeline waits on distinct queues. Wire it into the FG consumer and test lifetime, cancellation and resize. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
 | FFI-01 | P1 | [Raw Rust FFI](../bindings/rust/README.md) passes C layout and shared-library lifecycle tests on Windows and Linux. |
 | INT-01 / INT-02 | P1 | Read-only [Leonida](integrations/leonida/README.md) and [VIctory](integrations/victory/README.md) audits identify consumer seams and missing evidence. |
 | COMBO-01 | P1 | Verify independent and combined SR/FG paths with generated readback. |
-| QA-01 | P1 | Independent reproduction on another machine. |
+| QA-01 | P1 | The [standalone Vulkan handoff replicated on an RTX 4070 Ti SUPER](evidence/independent-vulkan-handoff.md). Independent DLSS replication remains open. |
 
 Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding whether a profile is ready to publish.
 
