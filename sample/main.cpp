@@ -55,6 +55,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL sampleValidation(VkDebugUtilsMessageSeveri
   printf("SAMPLE_VALIDATION severity=%u %s\n",unsigned(severity),data&&data->pMessage?data->pMessage:"(no message)");return VK_FALSE;
 }
 static bool g_verifyFG = false;
+static bool g_srOnly = false;
+static bool useManagedSwapchain() { return g_directFG || g_srOnly; }
 static int SAMPLE_WIDTH  = 1920;
 static int SAMPLE_HEIGHT = 1080;
 static std::filesystem::path g_ngxRuntimeDir, g_directLogDir, g_streamlineLogDir;
@@ -126,6 +128,13 @@ public:
   bool directReady=false;
   VkSurfaceKHR directSurface{};
   std::vector<bool> directSwapSeen;
+  std::vector<VkSemaphore> srPresentReady;
+
+  void releaseSrPresentSemaphores()
+  {
+    for(auto semaphore : srPresentReady) vkDestroySemaphore(m_device,semaphore,nullptr);
+    srPresentReady.clear();
+  }
   bool directRequestedVsync=true;
   bool directSwapchainDirty=false;
   VkPresentModeKHR directPresentMode=VK_PRESENT_MODE_FIFO_KHR;
@@ -154,7 +163,7 @@ public:
   // direct backend self-contained and initialize acquired images lazily instead.
   void createSwapchain(const VkSurfaceKHR& surface,uint32_t width,uint32_t height,VkFormat color=VK_FORMAT_B8G8R8A8_UNORM,VkFormat depth=VK_FORMAT_UNDEFINED,bool vsync=false) override
   {
-    if(!g_directFG){AppBaseVk::createSwapchain(surface,width,height,color,depth,vsync);return;}
+    if(!useManagedSwapchain()){AppBaseVk::createSwapchain(surface,width,height,color,depth,vsync);return;}
     directSurface=surface;m_size={width,height};m_colorFormat=color;m_depthFormat=VK_FORMAT_UNDEFINED;m_vsync=vsync;
     m_swapChain.init(m_device,m_physicalDevice,m_queue,m_graphicsQueueIndex,surface,color);
     directPresentMode=VK_PRESENT_MODE_FIFO_KHR;
@@ -174,15 +183,23 @@ public:
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=m_cmdPool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=m_swapChain.getImageCount();
     m_commandBuffers.resize(ai.commandBufferCount);NVVK_CHECK(vkAllocateCommandBuffers(m_device,&ai,m_commandBuffers.data()));
     directSwapSeen.assign(ai.commandBufferCount,false);CameraManip.setWindowSize(m_size.width,m_size.height);
+    if(g_srOnly){
+      // An image's acquire wait also orders the previous Present wait on that image.
+      srPresentReady.resize(ai.commandBufferCount);
+      const VkSemaphoreCreateInfo ci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+      for(auto& semaphore : srPresentReady)
+        NVVK_CHECK(vkCreateSemaphore(m_device,&ci,nullptr,&semaphore));
+    }
     directRequestedVsync=vsync;directSwapchainDirty=false;
     printf("DIRECT_VSYNC requested=%s present_mode=%s extent=%ux%u\n",vsync?"on":"off",directPresentModeName(),m_size.width,m_size.height);
   }
-  void createDepthBuffer() override {if(!g_directFG)AppBaseVk::createDepthBuffer();}
+  void createDepthBuffer() override {if(!useManagedSwapchain())AppBaseVk::createDepthBuffer();}
   void recreateDirectSwapchain(int width,int height,bool vsync)
   {
     if(width<=0||height<=0)return;
     NVVK_CHECK(vkDeviceWaitIdle(m_device));
     const VkExtent2D previousSize=m_size;
+    releaseSrPresentSemaphores();
     for(auto fence:m_waitFences)vkDestroyFence(m_device,fence,nullptr);
     vkFreeCommandBuffers(m_device,m_cmdPool,uint32_t(m_commandBuffers.size()),m_commandBuffers.data());
     m_waitFences.clear();m_commandBuffers.clear();m_swapChain.deinit();
@@ -195,7 +212,7 @@ public:
   }
   void onFramebufferSize(int width,int height) override
   {
-    if(!g_directFG){AppBaseVk::onFramebufferSize(width,height);return;}
+    if(!useManagedSwapchain()){AppBaseVk::onFramebufferSize(width,height);return;}
     recreateDirectSwapchain(width,height,directSwapchainDirty?directRequestedVsync:m_vsync);
   }
   void onKeyboard(int key,int scancode,int action,int mods) override
@@ -240,7 +257,7 @@ public:
     }
     // Set Streamline default options
     slDLSSSetOptions(m_viewportHandle, m_dlssOptions);
-    if(!g_directFG) slDLSSGSetOptions(m_viewportHandle, m_dlssgOptions);
+    if(!useManagedSwapchain()) slDLSSGSetOptions(m_viewportHandle, m_dlssgOptions);
     slReflexSetOptions(m_reflexOptions);
 
     if(g_directFG){m_reflexOptions.mode=sl::ReflexMode::eLowLatency;slReflexSetOptions(m_reflexOptions);directFG.initialize(info.instance,info.physicalDevice,info.device,m_queue,m_graphicsQueueIndex,g_ngxRuntimeDir,g_directLogDir);}
@@ -260,6 +277,7 @@ public:
     vkDeviceWaitIdle(m_device);
 
     if(g_directFG)directFG.shutdown();
+    releaseSrPresentSemaphores();
     destroyImages();
     destroyPipelines();
     destroyScene();
@@ -280,7 +298,7 @@ public:
 
   void prepareFrame() override
   {
-    if(g_directFG){
+    if(useManagedSwapchain()){
       // Apply UI/key changes between frames, before acquiring a swapchain image.
       if(directSwapchainDirty)recreateDirectSwapchain(int(m_size.width),int(m_size.height),directRequestedVsync);
       NVVK_CHECK(vkQueueWaitIdle(m_queue)); // Protect temporal history and descriptors.
@@ -653,9 +671,9 @@ public:
     // Post-processing
     {
       const auto swapIndex=m_swapChain.getActiveImageIndex();
-      const auto oldLayout=g_directFG&&!directSwapSeen[swapIndex]?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      const auto oldLayout=useManagedSwapchain()&&!directSwapSeen[swapIndex]?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
       nvvk::cmdBarrierImageLayout(cmd,m_swapChain.getActiveImage(),oldLayout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      if(g_directFG)directSwapSeen[swapIndex]=true;
+      if(useManagedSwapchain())directSwapSeen[swapIndex]=true;
 
       const nvvk::createRenderingInfo renderingInfo({{0, 0}, getSize()}, {m_swapChain.getActiveImageView()}, VK_NULL_HANDLE,
                                                     VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_DONT_CARE);
@@ -696,6 +714,29 @@ public:
 
   void submitFrame() override
   {
+    if(g_srOnly){
+      const uint32_t index=m_swapChain.getActiveImageIndex();
+      NVVK_CHECK(vkResetFences(m_device,1,&m_waitFences[index]));
+      const VkSemaphore acquired=m_swapChain.getActiveReadSemaphore();
+      const VkSemaphore ready=srPresentReady[index];
+      constexpr VkPipelineStageFlags stage=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      submit.waitSemaphoreCount=submit.signalSemaphoreCount=submit.commandBufferCount=1;
+      submit.pWaitSemaphores=&acquired;
+      submit.pWaitDstStageMask=&stage;
+      submit.pSignalSemaphores=&ready;
+      submit.pCommandBuffers=&m_commandBuffers[index];
+      NVVK_CHECK(vkQueueSubmit(m_queue,1,&submit,m_waitFences[index]));
+      VkPresentInfoKHR present{};
+      m_swapChain.presentCustom(present);
+      present.pWaitSemaphores=&ready;
+      const VkResult result=vkQueuePresentKHR(m_queue,&present);
+      if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR) {
+        ++srErrors;
+        std::printf("SR_PRESENT_ERROR=%d\n",int(result));
+      }
+      return;
+    }
     if(!g_directFG){AppBaseVk::submitFrame();return;}
     auto submitPresent=[&](bool generated){
       uint32_t i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkResetFences(m_device,1,&m_waitFences[i]));
@@ -1142,6 +1183,7 @@ int main(int argc, char** argv)
   for(int i=1;i<argc;++i){
     if(!strcmp(argv[i],"--streamline")||!strcmp(argv[i],"--verify-sr")||!strcmp(argv[i],"--verify-fg"))g_directFG=false;
     if(!strcmp(argv[i],"--verify-fg"))g_verifyFG=true;
+    if(!strcmp(argv[i],"--verify-sr"))g_srOnly=true;
     if(!strcmp(argv[i],"--validation"))g_validation=true;
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
@@ -1149,7 +1191,8 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--verify-direct-fg")){g_verifyDirectFG=true;g_frameLimit=24;}
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
   }
-  bool verifySr = !g_directFG && argc>=2 && (!strcmp(argv[1],"--verify-sr")||g_verifyFG);
+  g_srOnly=g_srOnly&&!g_verifyFG;
+  const bool verifySr=g_srOnly||g_verifyFG;
   try {
     configureRuntime();
   } catch(const std::exception& error) {
@@ -1181,7 +1224,7 @@ int main(int argc, char** argv)
   }
 
   std::vector<sl::Feature> slFeatures(std::begin(SL_FEATURES),std::end(SL_FEATURES));
-  if(g_directFG)slFeatures.pop_back(); // Direct NGX has its own FG feature; no SL gate override.
+  if(useManagedSwapchain())slFeatures.pop_back(); // Only the legacy Streamline mode requests Streamline FG.
   // Initialize Streamline (this must happen before any Vulkan calls are made)
   sl::Preferences pref;
   pref.showConsole = false;
@@ -1221,7 +1264,7 @@ int main(int argc, char** argv)
       contextInfo.addInstanceExtension(vkInstanceExtensions[i]);
   }
 
-  bool useVsync = g_directFG&&g_initialVsync;
+  bool useVsync = useManagedSwapchain()&&g_initialVsync;
   if(g_directFG){for(const char* ext:{"VK_NVX_binary_import","VK_NVX_image_view_handle","VK_KHR_push_descriptor","VK_KHR_external_memory_win32","VK_KHR_external_semaphore_win32"})contextInfo.addDeviceExtension(ext);}
 
 
@@ -1273,7 +1316,12 @@ int main(int argc, char** argv)
 
   // Create Vulkan device and queues
   VkPhysicalDevicePresentIdFeaturesKHR directPresentId{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
-  if(g_directFG){contextInfo.removeDeviceExtension(VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);contextInfo.addDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME,false,&directPresentId);}
+  if(useManagedSwapchain()) {
+    // The core Vulkan 1.2 bufferDeviceAddress feature supersedes the legacy EXT.
+    contextInfo.removeDeviceExtension(VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    // Reflex's VK_NV_low_latency2 dependency needs present_id or present_id2.
+    contextInfo.addDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME,false,&directPresentId);
+  }
   nvvk::Context context;
   if(!context.initInstance(contextInfo))
   {
@@ -1294,7 +1342,7 @@ int main(int argc, char** argv)
   adapter.vkPhysicalDevice = context.m_physicalDevice;
   // This sample can optionally run without DLSS, but it requires Reflex
   sl::Result dlssSupported  = sl::Result::eOk;
-  sl::Result dlssgSupported = g_directFG?sl::Result::eErrorFeatureNotSupported:sl::Result::eOk;
+  sl::Result dlssgSupported = useManagedSwapchain()?sl::Result::eErrorFeatureNotSupported:sl::Result::eOk;
 
   for(const sl::Feature feature : slFeatures)
   {
