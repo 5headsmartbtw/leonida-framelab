@@ -1,0 +1,36 @@
+name: No Game Files
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-game-files:
+    name: No Game Files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Use the base branch's checker and inspect the PR as Git objects only.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - name: Inspect every submitted commit
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --no-recurse-submodules origin "$PR_HEAD"
+          python scripts/check_no_game_files.py --base "$PR_BASE" --head "$PR_HEAD"
+      - name: Inspect the checked-out revision
+        if: github.event_name != 'pull_request'
+        run: python scripts/check_no_game_files.py
