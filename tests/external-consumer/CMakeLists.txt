@@ -17,3 +17,8 @@ foreach(consumer IN ITEMS c_consumer cpp_consumer)
   endif()
   add_test(NAME ${consumer} COMMAND ${consumer})
 endforeach()
+
+# Native layout probe for the Rust ABI test. It compiles the installed C header.
+add_executable(abi_layout abi_layout.c)
+target_compile_features(abi_layout PRIVATE c_std_11)
+target_link_libraries(abi_layout PRIVATE FrameLab::FrameLab)

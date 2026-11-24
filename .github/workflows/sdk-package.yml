@@ -22,3 +22,21 @@ jobs:
       - run: cmake -S tests/external-consumer -B consumer "-DCMAKE_PREFIX_PATH=${{ github.workspace }}/install-sdk" -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build consumer --config Release
       - run: ctest --test-dir consumer -C Release --output-on-failure --no-tests=error
+
+      - name: Compare C and Rust layouts and run FFI tests
+        if: matrix.shared == 'ON'
+        shell: pwsh
+        run: |
+          $install = (Resolve-Path install-sdk).Path
+          $env:FRAMELAB_LIB_DIR = Join-Path $install lib
+          if ($IsWindows) {
+            $env:PATH = (Join-Path $install bin) + [IO.Path]::PathSeparator + $env:PATH
+            $layout = './consumer/Release/abi_layout.exe'
+          } else {
+            $env:LD_LIBRARY_PATH = $env:FRAMELAB_LIB_DIR
+            $layout = './consumer/abi_layout'
+          }
+          $env:FRAMELAB_ABI_LAYOUT = & $layout
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --offline --manifest-path bindings/rust/Cargo.toml
+          exit $LASTEXITCODE
