@@ -38,3 +38,7 @@ Special thanks to @akimfomin and PortBridge for FrameLab's first independent har
 [Original test report](https://github.com/5headsmartbtw/leonida-framelab/pull/12#issuecomment-7142089405)
 
 [PortBridge continuity pilot](https://github.com/akimfomin/PortBridge/issues/41)
+
+## Cross-vendor validation
+
+[AMD validation task on PortBridge Test Lab](https://akimfomin.github.io/PortBridge/#/lab?task=framelab-12-vulkan-handoff) — tracked in #15.
