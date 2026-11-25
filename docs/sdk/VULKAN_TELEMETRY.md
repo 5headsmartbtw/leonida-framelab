@@ -1,6 +1,6 @@
 # Vulkan synthetic scene telemetry
 
-Run the installed Vulkan FG/SR sample with a bounded frame count. The benchmark turns validation and diagnostic readback off. The soak enables standard validation, readback and alternating resize at quarter intervals. Collect SyncVal separately so its results are visible and its instrumented timings are separate.
+Run the installed Vulkan FG/SR sample with a bounded frame count. The benchmark disables validation and diagnostic readback, places the window on one display and verifies its current refresh rate. The runner defaults to the primary display and accepts a Windows display name through `-MonitorDevice`. The soak enables standard validation and alternating resize at quarter intervals. The soak runner captures two consecutive FG source frames per 100-frame interval. The verifier compares the second generated image to both source images. SR captures the first evaluation at each extent and the final evaluation. Collect SyncVal separately so its results are visible and its instrumented timings are separate.
 
 ~~~powershell
 ./tests/run_vulkan_profiles.ps1 -Executable $exe -Mode benchmark -Frames 180 -LogRoot ./benchmark
@@ -9,7 +9,7 @@ Run the installed Vulkan FG/SR sample with a bounded frame count. The benchmark 
 
 The CSV records source frame intervals, summed Vulkan GPU timestamps for the recorded command buffers, real and generated Present calls, evaluation/error/fallback deltas, and actual render/output sizes and refresh. GPU timing covers the recorded work and excludes physical scanout. RSS is the Windows working set. VRAM is the Vulkan device-local heap usage estimate from VK_EXT_memory_budget. Both memory fields are sampled every 30 source frames. A GPU time of -1 means the timing query was unavailable. The CSV verified counter includes SR readbacks alongside verified generated images.
 
-## First measured run
+## Historical run across two displays
 
 RTX 2050 Laptop, Windows 11 build 26200, NVIDIA 617.14, Vulkan SDK 1.4.363.1, Streamline 2.14.1, with the separately acquired FG reference stack documented in #24. All eight 180-frame benchmark processes exited successfully. The table excludes the first 30 frames of each process. Low means the reciprocal of the mean of the slowest 1% of source intervals. Output was 1280×720 throughout.
 

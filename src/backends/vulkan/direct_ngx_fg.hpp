@@ -1,4 +1,5 @@
 #pragma once
+#include "../../../fg/FgDiagnosticReadback.hpp"
 // Direct NGX backend for the sample's own rasterized scene. NVIDIA SDK is external.
 // Probe architecture informed by dlssg-open, MIT (see THIRD_PARTY_LICENSES).
 #include "../../../fg/FrameInputsVulkan.hpp"
@@ -64,7 +65,7 @@ public:
   }
 
   void resize(VkCommandBuffer cmd,VkExtent2D size,bool readback) {
-    releaseImages(); extent=size;checking=readback;reset=true;
+    releaseImages(); extent=size;checking=readback;reset=true;readbackInterval=frame_inputs::diagnosticReadbackInterval();
     if(!initialized||!params||errors)return;
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=format;
     ci.extent={size.width,size.height,1};ci.mipLevels=ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;
@@ -123,7 +124,8 @@ public:
     barrier(cmd,depth,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT);
     barrier(cmd,mv,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);
     barrier(cmd,output,outputLayout,VK_IMAGE_LAYOUT_GENERAL);
-    if(checking) {
+    const bool capture=checking&&(readbackInterval==1||f.frameIndex%readbackInterval<2);
+    if(capture) {
       VkClearColorValue clear{};for(float& x:clear.float32)x=std::numeric_limits<float>::quiet_NaN();
       VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};vkCmdClearColorImage(cmd,output,VK_IMAGE_LAYOUT_GENERAL,&clear,1,&range);
       barrier(cmd,output,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL);
@@ -153,11 +155,11 @@ public:
     lastNative=r;
     if(!ok(r,"NGX Evaluate failed")){generated=false;sequence.invalidate();}
     else {
-      ++evaluations;generated=!o.reset;inFlightInputs=f;pendingSourceFrame=f.frameIndex;readbackPending=checking;status="Ready: FrameInputs, FG 2X";
+      ++evaluations;generated=!o.reset;inFlightInputs=f;pendingSourceFrame=f.frameIndex;readbackPending=capture;status="Ready: FrameInputs, FG 2X";
       if(checking)printf("FRAMEINPUTS_CONSUMED source_frame=%llu generation=%llu reset=%d leases_retained=1\n",static_cast<unsigned long long>(f.frameIndex),static_cast<unsigned long long>(f.generation),int(o.reset));
     }
     reset=false;
-    if(checking&&NVSDK_NGX_SUCCEED(r)) {
+    if(capture&&NVSDK_NGX_SUCCEED(r)) {
       for(unsigned i=0;i<2;++i){VkImage im=i?color:output;barrier(cmd,im,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         VkBufferImageCopy copy{};copy.bufferOffset=bytes*i;copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={extent.width,extent.height,1};
         vkCmdCopyImageToBuffer(cmd,im,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&copy);barrier(cmd,im,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);}
@@ -193,12 +195,13 @@ public:
     readbackPending=false;
     const auto* out=static_cast<const uint16_t*>(mapped);const auto* cur=out+bytes/2;
     size_t nonfinite=0,different=0,differentPrev=0;const size_t pixels=size_t(extent.width)*extent.height;
+    const bool consecutive=previous.size()==bytes&&pendingSourceFrame==lastReadbackFrame+1;
     for(size_t p=0;p<pixels;++p){for(int c=0;c<4;++c)nonfinite+=(out[p*4+c]&0x7c00)==0x7c00;
-      different+=memcmp(out+p*4,cur+p*4,8)!=0;differentPrev+=previous.size()==bytes&&memcmp(out+p*4,previous.data()+p*8,8)!=0;}
+      different+=memcmp(out+p*4,cur+p*4,8)!=0;differentPrev+=consecutive&&memcmp(out+p*4,previous.data()+p*8,8)!=0;}
     printf("DIRECT_READBACK frame=%u generated=%d nonfinite=%zu different_current=%zu different_previous=%zu\n",evaluations-1,int(generated),nonfinite,different,differentPrev);
-    if(nonfinite||(generated&&(!different||!differentPrev)))fail("FG output verification failed");
-    else if(generated)++verified;
-    if(evaluations==6) {
+    if(nonfinite||(generated&&(consecutive?(!different||!differentPrev):readbackInterval==1)))fail("FG output verification failed");
+    else if(generated&&consecutive)++verified;
+    if(evaluations==6&&readbackInterval==1) {
       for(unsigned i=0;i<2;++i) {
         const auto path=logDirectory / (i ? L"input-5.rgba16f" : L"generated-5.rgba16f");
         FILE* file=_wfopen(path.c_str(),L"wb");
@@ -206,6 +209,7 @@ public:
       }
     }
     previous.assign(reinterpret_cast<const unsigned char*>(cur),reinterpret_cast<const unsigned char*>(cur)+bytes);
+    lastReadbackFrame=pendingSourceFrame;
   }
 
   void releaseImages() {
@@ -221,7 +225,8 @@ private:
   static inline FILE* logFile=nullptr; // The SDK logging callback has no user-data parameter.
   frame_inputs::Sequence sequence;
   std::optional<frame_inputs::FrameInputs> inFlightInputs;
-  bool readbackPending=false;std::uint64_t pendingSourceFrame=0;
+  bool readbackPending=false;std::uint64_t pendingSourceFrame=0,lastReadbackFrame=0;
+  uint32_t readbackInterval=1;
   VkQueue expectedQueue{};std::uint32_t expectedQueueFamily=VK_QUEUE_FAMILY_IGNORED;
   VkPhysicalDevice pd{};VkDevice dev{};VkExtent2D extent{};VkDeviceMemory outputMemory{},bufferMemory{};VkBuffer buffer{};void* mapped{};VkDeviceSize bytes{};
   VkImageLayout outputLayout=VK_IMAGE_LAYOUT_UNDEFINED;static constexpr VkFormat format=VK_FORMAT_R16G16B16A16_SFLOAT;

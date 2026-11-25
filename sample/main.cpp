@@ -56,7 +56,9 @@
 #include <chrono>
 #include <atomic>
 #include "frame_metrics.hpp"
+#include "fg/FgDiagnosticReadback.hpp"
 static std::filesystem::path g_metricsPath;
+static std::wstring g_presentMonitor;
 static bool g_benchmark=false,g_benchmarkNative=false;
 static unsigned g_resizeEvery=0;
 static bool g_directFG = true, g_verifyDirectFG = false;
@@ -1525,6 +1527,7 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--verify-direct-fg")){g_verifyDirectFG=true;g_frameLimit=24;}
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
     if(!strcmp(argv[i],"--metrics")&&i+1<argc)g_metricsPath=std::filesystem::absolute(argv[++i]);
+    if(!strcmp(argv[i],"--present-monitor")&&i+1<argc)g_presentMonitor=std::filesystem::path(argv[++i]).wstring();
     if(!strcmp(argv[i],"--benchmark"))g_benchmark=true;
     if(!strcmp(argv[i],"--benchmark-native")){g_benchmark=g_benchmarkNative=true;g_directFG=false;g_srOnly=true;}
     if(!strcmp(argv[i],"--resize-every")&&i+1<argc)g_resizeEvery=std::max(2,atoi(argv[++i]));
@@ -1577,6 +1580,7 @@ int main(int argc, char** argv)
     return static_cast<int>(sl::Result::eErrorNotInitialized);
   }
 
+  const auto pinnedDisplay=FrameMetrics::placeOnDisplay(glfwGetWin32Window(window),g_presentMonitor);
   std::vector<sl::Feature> slFeatures(std::begin(SL_FEATURES),std::end(SL_FEATURES));
   if(useManagedSwapchain())slFeatures.pop_back(); // Only the legacy Streamline mode requests Streamline FG.
   // Initialize Streamline (this must happen before any Vulkan calls are made)
@@ -1859,7 +1863,7 @@ int main(int argc, char** argv)
 #endif
   app.create(appInfo, dlssSupported, dlssgSupported, verifySr);
   app.metrics.init(g_metricsPath,context.m_physicalDevice,context.m_device,context.m_queueGCT.familyIndex,
-                   context.hasDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME),glfwGetWin32Window(window));
+                   context.hasDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME),glfwGetWin32Window(window),pinnedDisplay);
   seriesStart=std::chrono::steady_clock::now();
 
   // Main loop
@@ -1957,7 +1961,10 @@ int main(int argc, char** argv)
   if(g_verifyFG) std::printf("VERIFY_FG real_frames=%u generated_presented=%u errors=%u passed=%d\n", verifiedFrames, app.fgPresented, app.fgErrors, int(verifyPassed));
   if(g_directFG){
     const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-seriesStart).count();
-    bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&app.directGeneratedPresents>0&&(!g_verifyDirectFG||g_benchmark||app.directFG.verified==app.directGeneratedPresents);
+    const bool readbackPassed=!g_verifyDirectFG||g_benchmark||
+        (frame_inputs::diagnosticReadbackInterval()==1?app.directFG.verified==app.directGeneratedPresents:app.directFG.verified>=2);
+    bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&
+        app.directGeneratedPresents>0&&readbackPassed;
     const unsigned expectedRejections=g_missingDepthFrame>=0&&unsigned(g_missingDepthFrame)<verifiedFrames?1u:0u;
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
 #ifdef FRAMELAB_INSTALLED_COMBO
