@@ -55,6 +55,12 @@
 #include <filesystem>
 #include <chrono>
 #include <atomic>
+#include "frame_metrics.hpp"
+#include "fg/FgDiagnosticReadback.hpp"
+static std::filesystem::path g_metricsPath;
+static std::wstring g_presentMonitor;
+static bool g_benchmark=false,g_benchmarkNative=false;
+static unsigned g_resizeEvery=0;
 static bool g_directFG = true, g_verifyDirectFG = false;
 static unsigned g_frameLimit=0;
 static int g_missingDepthFrame=-1;
@@ -183,6 +189,9 @@ public:
   }
   unsigned srSuccesses = 0;
   unsigned srErrors = 0;
+  unsigned metricsRealPresents=0;
+  FrameMetrics metrics;
+  VkExtent2D metricsRenderExtent() const {return m_gBuffers->getSize();}
   unsigned fgPresented = 0;
   unsigned fgErrors = 0;
   StreamlineSample()           = default;
@@ -316,10 +325,11 @@ public:
   {
     vkDeviceWaitIdle(m_device);
 
-    if(g_directFG)directFG.shutdown();
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    // Free Streamline's SR viewport while NGX is still initialized.
     if(g_sdkSr)sdkSr.shutdown();
 #endif
+    if(g_directFG)directFG.shutdown();
     releaseSrPresentSemaphores();
     destroyImages();
     destroyPipelines();
@@ -354,7 +364,7 @@ public:
     ImGui::Render();
 
     m_animationTimePrev = m_animationTime;
-    m_animationTime += g_verifyDirectFG ? 1.0f/30.0f : ImGui::GetIO().DeltaTime;
+    m_animationTime += (g_verifyDirectFG||g_benchmark) ? 1.0f/30.0f : ImGui::GetIO().DeltaTime;
   }
 
   void renderFrame(VkCommandBuffer& cmd, sl::FrameToken* frame)
@@ -644,7 +654,7 @@ public:
       if(g_sdkSr) {
         const auto source=sdkSrFrames++;
         const bool reject=g_sdkSrReject>=0&&source==uint32_t(g_sdkSrReject);
-        const uint32_t limit=g_frameLimit?std::min(120u,g_frameLimit):120u;
+        const uint32_t limit=g_frameLimit?g_frameLimit:120u;
         const auto inputOwner=PublicVulkanSrSample::lease(m_frameOwner);
         const auto outputOwner=PublicVulkanSrSample::lease(sdkOutput);
         constexpr VkImageUsageFlags common=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
@@ -667,7 +677,7 @@ public:
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,outputUsage,VK_IMAGE_ASPECT_COLOR_BIT,m_graphicsQueueIndex,outputOwner.get()};
         const bool firstAtExtent=sdkSrCaptureResize;
         const bool evaluated=sdkSr.record(cmd,uint32_t(*frame),reject,directConstants,color,depth,motion,output,
-                                           firstAtExtent||source+1==limit);
+                                           !g_benchmark&&(firstAtExtent||source+1==limit));
         if(evaluated) { ++srSuccesses;sdkSrCaptureResize=false; }
         else {
           nvvk::cmdBarrierImageLayout(cmd,color.image,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -900,7 +910,8 @@ public:
       if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR) {
         ++srErrors;
         std::printf("SR_PRESENT_ERROR=%d\n",int(result));
-      }
+      } else ++metricsRealPresents;
+      if(metrics.active())NVVK_CHECK(vkQueueWaitIdle(m_queue));
       return;
     }
     if(!g_directFG){AppBaseVk::submitFrame();return;}
@@ -952,7 +963,11 @@ public:
       }
       const auto i=m_swapChain.getActiveImageIndex();NVVK_CHECK(vkWaitForFences(m_device,1,&m_waitFences[i],VK_TRUE,30000000000ull));
       VkCommandBuffer cmd=m_commandBuffers[i];NVVK_CHECK(vkResetCommandBuffer(cmd,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-      NVVK_CHECK(vkBeginCommandBuffer(cmd,&bi));renderOutput(cmd,false);NVVK_CHECK(vkEndCommandBuffer(cmd));submitPresent(false);
+      NVVK_CHECK(vkBeginCommandBuffer(cmd,&bi));
+      metrics.startExtra(cmd);
+      renderOutput(cmd,false);
+      metrics.endExtra(cmd);
+      NVVK_CHECK(vkEndCommandBuffer(cmd));submitPresent(false);
     }
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
     directFG.finishFrame();
@@ -1310,7 +1325,7 @@ private:
 #endif
     ++m_inputGeneration;
     if(g_directFG){
-      auto cmd=createTempCmdBuffer();directFG.resize(cmd,size,g_verifyDirectFG);
+      auto cmd=createTempCmdBuffer();directFG.resize(cmd,size,g_verifyDirectFG&&!g_benchmark);
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
       if(g_cancelFirstFgResize) {
         g_cancelFirstFgResize=false;
@@ -1320,7 +1335,7 @@ private:
           throw std::runtime_error("native resize cancellation did not exercise a recording");
         std::puts("PUBLIC_VULKAN_FG native_resize_cancelled=1");
         cmd=createTempCmdBuffer();
-        directFG.resize(cmd,size,g_verifyDirectFG);
+        directFG.resize(cmd,size,g_verifyDirectFG&&!g_benchmark);
       }
       NVVK_CHECK(vkEndCommandBuffer(cmd));
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -1512,6 +1527,11 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--vsync"))g_initialVsync=true;
     if(!strcmp(argv[i],"--verify-direct-fg")){g_verifyDirectFG=true;g_frameLimit=24;}
     if(!strcmp(argv[i],"--frames")&&i+1<argc)g_frameLimit=std::max(2,atoi(argv[++i]));
+    if(!strcmp(argv[i],"--metrics")&&i+1<argc)g_metricsPath=std::filesystem::absolute(argv[++i]);
+    if(!strcmp(argv[i],"--present-monitor")&&i+1<argc)g_presentMonitor=std::filesystem::path(argv[++i]).wstring();
+    if(!strcmp(argv[i],"--benchmark"))g_benchmark=true;
+    if(!strcmp(argv[i],"--benchmark-native")){g_benchmark=g_benchmarkNative=true;g_directFG=false;g_srOnly=true;}
+    if(!strcmp(argv[i],"--resize-every")&&i+1<argc)g_resizeEvery=std::max(2,atoi(argv[++i]));
   }
   g_srOnly=g_srOnly&&!g_verifyFG;
 #ifdef FRAMELAB_INSTALLED_COMBO
@@ -1520,14 +1540,24 @@ int main(int argc, char** argv)
     return 2;
   }
 #endif
-  const bool verifySr=g_srOnly||g_verifyFG||g_sdkCombo;
+  const bool verifySr=(g_srOnly&&!g_benchmarkNative)||g_verifyFG||g_sdkCombo;
+  if((g_benchmark&&g_validation)||(!g_metricsPath.empty()&&!useManagedSwapchain())) {
+    std::fputs("Benchmarking requires standard managed presentation without validation\n",stderr);
+    return 2;
+  }
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  if(!g_metricsPath.empty()&&g_sdkHandoff!=SdkHandoff::none) {
+    std::fputs("GPU timestamps currently cover the single-command-stream profile\n",stderr);
+    return 2;
+  }
+#endif
   try {
     configureRuntime();
   } catch(const std::exception& error) {
     std::fprintf(stderr,"FrameLab runtime configuration: %s\n",error.what());
     return 2;
   }
-  if(g_directFG || verifySr) { SAMPLE_WIDTH = 1280; SAMPLE_HEIGHT = 720; }
+  if(g_directFG || verifySr || g_benchmarkNative) { SAMPLE_WIDTH = 1280; SAMPLE_HEIGHT = 720; }
   unsigned verifiedFrames = 0;
   auto seriesStart=std::chrono::steady_clock::now();
   // Setup GLFW window
@@ -1551,6 +1581,7 @@ int main(int argc, char** argv)
     return static_cast<int>(sl::Result::eErrorNotInitialized);
   }
 
+  const auto pinnedDisplay=FrameMetrics::placeOnDisplay(glfwGetWin32Window(window),g_presentMonitor);
   std::vector<sl::Feature> slFeatures(std::begin(SL_FEATURES),std::end(SL_FEATURES));
   if(useManagedSwapchain())slFeatures.pop_back(); // Only the legacy Streamline mode requests Streamline FG.
   // Initialize Streamline (this must happen before any Vulkan calls are made)
@@ -1577,6 +1608,7 @@ int main(int argc, char** argv)
 
   nvvk::ContextCreateInfo contextInfo(/* bUseValidation = */ false);
   contextInfo.setVersion(1, 3);
+  if(!g_metricsPath.empty())contextInfo.addDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,true);
   if(g_validation) {
     contextInfo.addInstanceLayer("VK_LAYER_KHRONOS_validation");
     contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -1831,6 +1863,8 @@ int main(int argc, char** argv)
   app.sdkSr.deviceOwner=contextOwner;
 #endif
   app.create(appInfo, dlssSupported, dlssgSupported, verifySr);
+  app.metrics.init(g_metricsPath,context.m_physicalDevice,context.m_device,context.m_queueGCT.familyIndex,
+                   context.hasDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME),glfwGetWin32Window(window),pinnedDisplay);
   seriesStart=std::chrono::steady_clock::now();
 
   // Main loop
@@ -1857,6 +1891,10 @@ int main(int argc, char** argv)
       // Simulation marker should capture reading of new inputs and all the work done to update the world based on those inputs, but not the sleep above
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::eSimulationStart, *frame);
 
+      if(g_resizeEvery&&verifiedFrames>0&&verifiedFrames%g_resizeEvery==0) {
+        const bool smaller=(verifiedFrames/g_resizeEvery)%2!=0;
+        glfwSetWindowSize(window,smaller?1008:1280,smaller?601:720);
+      }
       glfwPollEvents();
 
       app.prepareFrame();
@@ -1875,7 +1913,9 @@ int main(int argc, char** argv)
       beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
       vkBeginCommandBuffer(cmd, &beginInfo);
 
+      app.metrics.start(cmd);
       app.renderFrame(cmd, frame);
+      app.metrics.end(cmd);
 
       vkEndCommandBuffer(cmd);
 
@@ -1889,7 +1929,17 @@ int main(int argc, char** argv)
 
       app.submitFrame();
       ++verifiedFrames;
-      if((verifySr && verifiedFrames >= (g_verifyFG?12u:120u))||(g_frameLimit&&verifiedFrames>=g_frameLimit))glfwSetWindowShouldClose(window,GLFW_TRUE);
+      unsigned verified=app.directFG.verified,failed=app.directFG.errors+app.srErrors;
+      unsigned fallbacks=app.directFG.rejectedFrames;
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+      if(g_sdkSr) {verified+=app.sdkSr.readbacks;fallbacks+=app.sdkSr.rejected;}
+#endif
+      app.metrics.write(verifiedFrames,FrameMetrics::Clock::now(),
+                        {app.srSuccesses,app.directFG.evaluations,app.directRealPresents+app.metricsRealPresents,
+                         app.directGeneratedPresents,verified,failed,fallbacks},
+                        app.metricsRenderExtent(),app.getSize());
+      const unsigned limit=g_frameLimit?g_frameLimit:(verifySr?(g_verifyFG?12u:120u):0);
+      if(limit&&verifiedFrames>=limit)glfwSetWindowShouldClose(window,GLFW_TRUE);
 
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::ePresentEnd, *frame);
     }
@@ -1900,9 +1950,9 @@ int main(int argc, char** argv)
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
   if(g_sdkSr) {
     const unsigned expected=g_sdkSrReject>=0&&unsigned(g_sdkSrReject)<verifiedFrames?1u:0u;
-    const unsigned target=g_frameLimit?std::min(120u,g_frameLimit):120u;
+    const unsigned target=g_frameLimit?g_frameLimit:120u;
     verifyPassed=drained==VK_SUCCESS&&app.srErrors==0&&verifiedFrames==target&&
-        app.srSuccesses==target-expected&&app.sdkSr.rejected==expected&&app.sdkSr.readbacks>=2&&
+        app.srSuccesses==target-expected&&app.sdkSr.rejected==expected&&(g_benchmark||app.sdkSr.readbacks>=2)&&
         app.sdkSr.resets>=1+expected;
     std::printf("VERIFY_PUBLIC_VULKAN_SR readbacks=%u resets=%u rejected=%u passed=%d\n",
                 app.sdkSr.readbacks,app.sdkSr.resets,app.sdkSr.rejected,int(verifyPassed));
@@ -1912,7 +1962,10 @@ int main(int argc, char** argv)
   if(g_verifyFG) std::printf("VERIFY_FG real_frames=%u generated_presented=%u errors=%u passed=%d\n", verifiedFrames, app.fgPresented, app.fgErrors, int(verifyPassed));
   if(g_directFG){
     const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-seriesStart).count();
-    bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&app.directGeneratedPresents>0&&(!g_verifyDirectFG||app.directFG.verified==app.directGeneratedPresents);
+    const bool readbackPassed=!g_verifyDirectFG||g_benchmark||
+        (frame_inputs::diagnosticReadbackInterval()==1?app.directFG.verified==app.directGeneratedPresents:app.directFG.verified>=2);
+    bool passed=app.directFG.errors==0&&drained==VK_SUCCESS&&app.directFG.evaluations>0&&
+        app.directGeneratedPresents>0&&readbackPassed;
     const unsigned expectedRejections=g_missingDepthFrame>=0&&unsigned(g_missingDepthFrame)<verifiedFrames?1u:0u;
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
 #ifdef FRAMELAB_INSTALLED_COMBO
@@ -1925,14 +1978,22 @@ int main(int argc, char** argv)
     printf("VERIFY_FRAMEINPUTS rejected=%u expected_rejections=%u in_flight=%d\n",app.directFG.rejectedFrames,expectedRejections,int(app.directFG.hasInFlightInputs()));
     printf("VERIFY_DIRECT_FG real_frames=%u evaluations=%u verified=%u real_presents=%u generated_presents=%u errors=%u seconds=%.6f passed=%d\n",verifiedFrames,app.directFG.evaluations,app.directFG.verified,app.directRealPresents,app.directGeneratedPresents,app.directFG.errors,seconds,int(passed));verifyPassed=passed;
   }
+  app.metrics.destroy();
   app.destroy();
 
-  // Shut down Streamline before destroying Vulkan device, so that it can clean up its resources properly
-  slShutdown();
+  const auto streamlineShutdown=slShutdown();
+  if(streamlineShutdown!=sl::Result::eOk) {
+    std::fprintf(stderr,"Streamline shutdown failed (%d)\n",int(streamlineShutdown));
+    verifyPassed=false;
+  }
 
   vkDestroySurfaceKHR(context.m_instance, surface, nullptr);
 
   if(validationMessenger){
+    // Keep debug reporting active while the device destroys its children.
+    NVVK_CHECK(vkDeviceWaitIdle(context.m_device));
+    vkDestroyDevice(context.m_device,nullptr);
+    context.m_device=VK_NULL_HANDLE;
     auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(context.m_instance,"vkDestroyDebugUtilsMessengerEXT"));destroy(context.m_instance,validationMessenger,nullptr);
     printf("SAMPLE_VALIDATION_SUMMARY errors=%u warnings=%u\n",g_validationErrors.load(),g_validationWarnings.load());if(g_validationErrors)verifyPassed=false;
   }
