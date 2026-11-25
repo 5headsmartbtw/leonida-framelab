@@ -24,6 +24,18 @@ RTX 2050 Laptop, Windows 11 build 26200, NVIDIA 617.14, Vulkan 1.4.363.1 and Str
 | SR + FG | Off / Immediate | 640x360 | 99.28 | 99.28 | 198.56 | 10.07 / 11.41 | 86.55 | 7.93 | 427.4–427.4 | 322.5–322.5 |
 | SR + FG | On / FIFO | 640x360 | 37.48 | 37.48 | 74.97 | 26.68 / 27.65 | 36.16 | 8.63 | 422.7–422.8 | 318.7–318.7 |
 
+## Stepped stability runs
+
+On the RTX 2050 Laptop, each successful profile completed 120, 500, 1,000 and 10,000 rendered source frames with VSync off, standard validation and three alternating resizes. Each 10,000-frame process drained the device, exited with empty stderr and logged zero unexpected fallbacks. The combined soak used a single command stream. See [PR #27](https://github.com/5headsmartbtw/leonida-framelab/pull/27) for the separate cross-queue validation.
+
+| Profile / revision | SR / FG evaluations | Real / generated Presents | SR / FG verified readbacks | RSS start → end (peak) MiB | Device-local VRAM start → end (peak) MiB | Peak GPU °C | Vulkan errors / warnings |
+| --- | ---: | ---: | ---: | --- | --- | ---: | ---: |
+| SR / 400d7c7 | 10,000 / 0 | 10,000 / 0 | 5 / 0 | 394.3 → 411.6 (415.6) | 189.1 → 164.2 (232.8) | 71 | 0 / 0 |
+| FG / 400d7c7 | 0 / 10,000 | 10,000 / 9,996 | 0 / 100 | 444.1 → 467.6 (471.4) | 246.8 → 196.8 (246.8) | 66 | 0 / 0 |
+| SR + FG / cd19b21 | 10,000 / 10,000 | 10,000 / 9,996 | 5 / 100 | 461.4 → 485.6 (497.4) | 322.5 → 307.4 (428.2) | 67 | 0 / 0 |
+
+Before the teardown fix, the 120- and 500-frame combined runs rendered all frames and then logged `VUID-vkDestroyDevice-device-05137`. Streamline had unresolved child objects during device destruction. The host now releases the SR viewport before shutting down NGX and keeps device destruction within the validation window. All four combined stages were rerun after the fix. Extended SyncVal remains tracked independently in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24).
+
 ## Historical run across two displays
 
 RTX 2050 Laptop, Windows 11 build 26200, NVIDIA 617.14, Vulkan SDK 1.4.363.1, Streamline 2.14.1, with the separately acquired FG reference stack documented in #24. All eight 180-frame benchmark processes exited successfully. The table excludes the first 30 frames of each process. Low means the reciprocal of the mean of the slowest 1% of source intervals. Output was 1280×720 throughout.
