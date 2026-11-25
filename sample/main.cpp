@@ -724,6 +724,7 @@ public:
             if(!sdkConsumerCommands)throw std::runtime_error("combined cancellation requires a separate recording");
             vkFreeCommandBuffers(m_device,m_cmdPool,1,&sdkConsumerCommands);
             if(!directFG.cancelUnsubmittedEvaluation())throw std::runtime_error("combined FG evaluation did not record");
+            ++sdkComboFgCancelled;
             sdkConsumerCommands=createTempCmdBuffer();
             cmd=sdkConsumerCommands;
             directReady=false;
@@ -769,6 +770,15 @@ public:
     // Update previous matrices for next frame
     m_projMatrixPrev = projMatrix;
     m_viewMatrixPrev = viewMatrix;
+  }
+
+  void endFrameRecording(VkCommandBuffer sceneCommands)
+  {
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    // splitProducer ended and submitted sceneCommands. End the actual consumer recording.
+    if(sdkConsumerCommands)sceneCommands=sdkConsumerCommands;
+#endif
+    NVVK_CHECK(vkEndCommandBuffer(sceneCommands));
   }
 
   frame_inputs::VulkanFrameInputs frameInputs(VkCommandBuffer cmd,const sl::Constants& constants)
@@ -1486,7 +1496,7 @@ private:
   };
 #ifdef FRAMELAB_INSTALLED_COMBO
 public:
-  unsigned sdkComboInputs{};
+  unsigned sdkComboInputs{},sdkComboFgCancelled{};
 private:
   bool sdkComboCanRemap=false,sdkComboRemapped=false,sdkComboSrProduced=false;
   std::shared_ptr<nvvkhl::GBuffer> sdkComboImages;
@@ -1898,11 +1908,11 @@ int main(int argc, char** argv)
 
       VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
       beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-      vkBeginCommandBuffer(cmd, &beginInfo);
+      NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
       app.renderFrame(cmd, frame);
 
-      vkEndCommandBuffer(cmd);
+      app.endFrameRecording(cmd);
 
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::eRenderSubmitEnd, *frame);
     }
@@ -1942,10 +1952,12 @@ int main(int argc, char** argv)
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
 #ifdef FRAMELAB_INSTALLED_COMBO
     if(g_sdkCombo) {
-      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&app.directFG.evaluations==app.srSuccesses;
+      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&
+          app.directFG.evaluations+app.sdkComboFgCancelled==app.srSuccesses;
       if(g_cancelCombinedFrame>=0)passed=passed&&g_cancelledCombinedFrame;
-      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_evaluations=%u generated=%u passed=%d\n",
-                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,app.directFG.verified,int(passed));
+      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_evaluations=%u fg_cancelled=%u generated=%u passed=%d\n",
+                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,app.sdkComboFgCancelled,
+                  app.directFG.verified,int(passed));
     }
 #endif
     printf("VERIFY_FRAMEINPUTS rejected=%u expected_rejections=%u in_flight=%d\n",app.directFG.rejectedFrames,expectedRejections,int(app.directFG.hasInFlightInputs()));
