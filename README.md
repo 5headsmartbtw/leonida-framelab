@@ -30,7 +30,7 @@ The repository brings together a working Windows Vulkan/D3D12 FG testbed, an API
 | VSync / resize / FG toggle | Live Immediate↔FIFO, resize to 1920×1009, disable/re-enable; validation 0/0 | API Present counts are not physical scanout or latency |
 | Leonida integration | Pipeline audited, concrete integration plan written | Required game semantics and completion/lifetime seam still missing |
 
-Published hardware evidence comes from a single **RTX 2050 Laptop, SM 8.6, 4 GB** with Windows 11 and NVIDIA 617.14. Independent replication is open. See [validation](docs/phase3/VALIDATION.en.md) and the [coordination thread](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
+The reference prototype runs used an **RTX 2050 Laptop, SM 8.6, 4 GB** with Windows 11 and NVIDIA 617.14. Contributors independently reproduced the standalone Vulkan queue handoff on an RTX 4070 Ti SUPER, a Radeon 860M and the Ryzen 9 9950X3D integrated GPU. The AMD runs cover the standalone fixture only. [Reference validation](docs/phase3/VALIDATION.en.md) · [Independent handoff evidence](docs/evidence/independent-vulkan-handoff.md)
 
 ## Why FrameInputs matters
 
