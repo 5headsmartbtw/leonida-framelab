@@ -91,19 +91,37 @@ public:
 
   bool willSplit() const {return fg&&handoff&&enabled;}
 
+  bool cancelUnsubmittedEvaluation()
+  {
+    if(!pending||!framePending)return false;
+    check(framelab_vulkan_fg_cancel(fg));
+    pending=false;
+    framePending=false;
+    reset=true;
+    return true;
+  }
+
   // The scene's actual rendering is submitted before the FG command buffer.
   // A transfer-family relay passes exclusive ownership back to the graphics queue.
-  void splitProducer(VkCommandBuffer producerCmd,const frame_inputs::VulkanFrameInputs& inputs)
+  void splitProducer(VkCommandBuffer producerCmd,const frame_inputs::VulkanFrameInputs& inputs,
+                     VkSemaphore srTimeline=VK_NULL_HANDLE,uint64_t srValue=0)
   {
     if(crossFamily) ownership(producerCmd,inputs,consumerFamily,producerFamily,false,true);
     vkcheck(vkEndCommandBuffer(producerCmd));
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount=1;
     submit.pCommandBuffers=&producerCmd;
-    submit.signalSemaphoreCount=1;
+    const VkSemaphore signals[]{crossFamily?handoff->toRelay:handoff->ready,srTimeline};
+    submit.signalSemaphoreCount=srTimeline?2:1;
+    submit.pSignalSemaphores=signals;
     if(crossFamily) {
-      submit.pSignalSemaphores=&handoff->toRelay;
+      const uint64_t signalValues[]{0,srValue};
+      const VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+        nullptr,0,nullptr,2,signalValues};
+      if(srTimeline)submit.pNext=&timeline;
       vkcheck(vkQueueSubmit(consumer,1,&submit,VK_NULL_HANDLE));
+      submit.pNext=nullptr;
+      submit.signalSemaphoreCount=1;
       vkcheck(vkResetCommandBuffer(handoff->relay,0));
       const VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,nullptr,
                                           VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
@@ -132,10 +150,10 @@ public:
         submit.pWaitSemaphores=&handoff->ready;
         submit.pWaitDstStageMask=&all;
       }
-      timeline.signalSemaphoreValueCount=1;
-      timeline.pSignalSemaphoreValues=&producerTicket;
+      const uint64_t signalValues[]{producerTicket,srValue};
+      timeline.signalSemaphoreValueCount=submit.signalSemaphoreCount;
+      timeline.pSignalSemaphoreValues=signalValues;
       submit.pNext=&timeline;
-      submit.pSignalSemaphores=&handoff->ready;
       vkcheck(vkQueueSubmit(producerQueue,1,&submit,VK_NULL_HANDLE));
       producerNeedsReturn=true;
     }
