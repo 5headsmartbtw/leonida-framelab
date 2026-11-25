@@ -352,7 +352,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_retire(FrameLabVulkanSr* sr)
     const auto result = vulkanResult(vkGetSemaphoreCounterValue(sr->device, sr->completion, &reached));
     if (result == FRAMELAB_OK && reached < sr->ticket) return FRAMELAB_NOT_READY;
     if (result != FRAMELAB_OK) {
-        if (result == FRAMELAB_DEVICE_LOST) sr->lost = true;
+        if (result == FRAMELAB_DEVICE_LOST) return framelab_vulkan_sr_notify_device_lost(sr);
         return result;
     }
     sr->phase = Phase::idle;
@@ -367,6 +367,13 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_invalidate(FrameLabVulkanSr* sr)
     if (sr->phase != Phase::idle) return FRAMELAB_BUSY;
     sr->needReset = true;
     return FRAMELAB_OK;
+}
+
+FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_notify_device_lost(FrameLabVulkanSr* sr)
+{
+    if (!sr) return FRAMELAB_INVALID_ARGUMENT;
+    sr->lost = true;
+    return FRAMELAB_DEVICE_LOST;
 }
 
 FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_release_lost_device(FrameLabVulkanSr* sr)

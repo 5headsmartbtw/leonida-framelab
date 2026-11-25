@@ -137,13 +137,16 @@ public:
         info.signalSemaphoreCount = 2;
         info.pSignalSemaphores = signals;
         const auto result = vkQueueSubmit(queue, 1, &info, fence);
+        if (result == VK_ERROR_DEVICE_LOST) framelab_vulkan_sr_notify_device_lost(sr);
         if (result != VK_SUCCESS) {
             // The caller resets or discards the command buffer before asking the backend to cancel.
             return result;
         }
         submitted(work);
         const VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,nullptr,0,1,&work.timeline,&work.value};
-        vkcheck(vkWaitSemaphores(dev, &wait, 30000000000ull));
+        const auto drained=vkWaitSemaphores(dev, &wait, 30000000000ull);
+        if(drained==VK_ERROR_DEVICE_LOST)framelab_vulkan_sr_notify_device_lost(sr);
+        if(drained!=VK_SUCCESS)return drained;
         completed(work);
         return result;
     }

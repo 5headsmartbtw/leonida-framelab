@@ -63,6 +63,7 @@ static bool g_validation=false;
 enum class SdkHandoff { none, sameFamily, crossFamily };
 static SdkHandoff g_sdkHandoff=SdkHandoff::none;
 static bool g_cancelFirstFgResize=false;
+static bool g_failFirstFgResizeSubmit=false;
 #endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
@@ -1325,8 +1326,30 @@ private:
       NVVK_CHECK(vkEndCommandBuffer(cmd));
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
       submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
-      NVVK_CHECK(directFG.submit(submit,VK_NULL_HANDLE));
-      NVVK_CHECK(vkQueueWaitIdle(m_queue));
+      if(g_failFirstFgResizeSubmit) {
+        g_failFirstFgResizeSubmit=false;
+        const auto injected=directFG.submit(submit,VK_NULL_HANDLE,VK_NULL_HANDLE,0,
+          [](VkQueue,uint32_t,const VkSubmitInfo*,VkFence) -> VkResult {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+          });
+        if(injected!=VK_ERROR_OUT_OF_HOST_MEMORY)
+          throw std::runtime_error("the rejected-submit test did not return its injected result");
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
+        if(!directFG.cancelUnsubmittedResize())
+          throw std::runtime_error("the SDK did not retain the rejected command's recording");
+        std::puts("PUBLIC_VULKAN_FG injected_submit_oom=1 native_recording_discarded=1");
+        cmd=createTempCmdBuffer();
+        directFG.resize(cmd,size,g_verifyDirectFG);
+        NVVK_CHECK(vkEndCommandBuffer(cmd));
+      }
+      VkFence completion{};
+      const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+      NVVK_CHECK(vkCreateFence(m_device,&fenceInfo,nullptr,&completion));
+      NVVK_CHECK(directFG.submit(submit,completion));
+      const auto drained=vkWaitForFences(m_device,1,&completion,VK_TRUE,30000000000ull);
+      if(drained==VK_TIMEOUT)throw std::runtime_error("Vulkan FG resize took more than 30 seconds");
+      NVVK_CHECK(drained);
+      vkDestroyFence(m_device,completion,nullptr);
       directFG.onGpuCompleted();
       vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
 #else
@@ -1506,6 +1529,7 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--sdk-handoff-same"))g_sdkHandoff=SdkHandoff::sameFamily;
     if(!strcmp(argv[i],"--sdk-handoff-cross"))g_sdkHandoff=SdkHandoff::crossFamily;
     if(!strcmp(argv[i],"--sdk-cancel-first-resize"))g_cancelFirstFgResize=true;
+    if(!strcmp(argv[i],"--sdk-fail-first-resize-submit"))g_failFirstFgResizeSubmit=true;
 #endif
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
