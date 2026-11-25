@@ -74,6 +74,7 @@ static bool g_verifyFG = false;
 static bool g_srOnly = false;
 #ifdef FRAMELAB_INSTALLED_COMBO
 static bool g_sdkCombo=false;
+static int g_cancelCombinedFrame=-1;
 #else
 static constexpr bool g_sdkCombo=false;
 #endif
@@ -316,10 +317,11 @@ public:
   {
     vkDeviceWaitIdle(m_device);
 
-    if(g_directFG)directFG.shutdown();
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    // Free Streamline's SR viewport while NGX is still initialized.
     if(g_sdkSr)sdkSr.shutdown();
 #endif
+    if(g_directFG)directFG.shutdown();
     releaseSrPresentSemaphores();
     destroyImages();
     destroyPipelines();
@@ -363,6 +365,7 @@ public:
     sdkSrFallback=false;
 #ifdef FRAMELAB_INSTALLED_COMBO
     sdkComboSrProduced=false;
+    sdkComboProducerSignal={};
 #endif
 #endif
     const VkExtent2D renderSize = m_gBuffers->getSize();
@@ -709,7 +712,25 @@ public:
         if(!sdkComboSrProduced||!sdkComboImages)directFG.skipFrame();
         else {
           prepareCombinedInputs(cmd,inputs);
+          if(directFG.willSplit()) {
+            sdkComboProducerSignal=sdkSr.signal();
+            directFG.splitProducer(cmd,inputs,sdkComboProducerSignal.timeline,sdkComboProducerSignal.value);
+            sdkSr.submitted(sdkComboProducerSignal);
+            sdkConsumerCommands=createTempCmdBuffer();
+            cmd=sdkConsumerCommands;
+          }
           directReady=directFG.evaluate(cmd,inputs);
+          if(g_cancelCombinedFrame>=0&&inputs.frame.frameIndex==uint64_t(g_cancelCombinedFrame)) {
+            if(!sdkConsumerCommands)throw std::runtime_error("combined cancellation requires a separate recording");
+            vkFreeCommandBuffers(m_device,m_cmdPool,1,&sdkConsumerCommands);
+            if(!directFG.cancelUnsubmittedEvaluation())throw std::runtime_error("combined FG evaluation did not record");
+            ++sdkComboFgCancelled;
+            sdkConsumerCommands=createTempCmdBuffer();
+            cmd=sdkConsumerCommands;
+            directReady=false;
+            std::printf("PUBLIC_VULKAN_COMBO_CANCEL source=%llu\n",
+                        static_cast<unsigned long long>(inputs.frame.frameIndex));
+          }
         }
       } else
 #endif
@@ -748,6 +769,15 @@ public:
     // Update previous matrices for next frame
     m_projMatrixPrev = projMatrix;
     m_viewMatrixPrev = viewMatrix;
+  }
+
+  void endFrameRecording(VkCommandBuffer sceneCommands)
+  {
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    // splitProducer ended and submitted sceneCommands. End the actual consumer recording.
+    if(sdkConsumerCommands)sceneCommands=sdkConsumerCommands;
+#endif
+    NVVK_CHECK(vkEndCommandBuffer(sceneCommands));
   }
 
   frame_inputs::VulkanFrameInputs frameInputs(VkCommandBuffer cmd,const sl::Constants& constants)
@@ -917,9 +947,10 @@ public:
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
       if(sdkConsumerCommands)si.pCommandBuffers=&sdkConsumerCommands;
 #ifdef FRAMELAB_INSTALLED_COMBO
-      const auto srSignal=g_sdkCombo?sdkSr.signal():PublicVulkanSrSample::Signal{};
-      NVVK_CHECK(directFG.submit(si,m_waitFences[i],srSignal.timeline,srSignal.value));
-      sdkSr.submitted(srSignal);
+      const bool srWasSubmitted=sdkComboProducerSignal.timeline!=VK_NULL_HANDLE;
+      const auto srSignal=g_sdkCombo && !srWasSubmitted?sdkSr.signal():sdkComboProducerSignal;
+      NVVK_CHECK(directFG.submit(si,m_waitFences[i],srWasSubmitted?VK_NULL_HANDLE:srSignal.timeline,srSignal.value));
+      if(!srWasSubmitted)sdkSr.submitted(srSignal);
 #else
       NVVK_CHECK(directFG.submit(si,m_waitFences[i]));
 #endif
@@ -932,6 +963,7 @@ public:
       NVVK_CHECK(vkQueueWaitIdle(m_queue));
 #ifdef FRAMELAB_INSTALLED_COMBO
       if(g_sdkCombo)sdkSr.completed(srSignal);
+      sdkComboProducerSignal={};
 #endif
     };
     submitPresent(directReady);
@@ -1463,7 +1495,7 @@ private:
   };
 #ifdef FRAMELAB_INSTALLED_COMBO
 public:
-  unsigned sdkComboInputs{};
+  unsigned sdkComboInputs{},sdkComboFgCancelled{};
 private:
   bool sdkComboCanRemap=false,sdkComboRemapped=false,sdkComboSrProduced=false;
   std::shared_ptr<nvvkhl::GBuffer> sdkComboImages;
@@ -1472,6 +1504,7 @@ private:
     std::shared_ptr<SdkSrOutput> upscaled;
   };
   std::shared_ptr<CombinedFrameOwner> sdkComboOwner;
+  PublicVulkanSrSample::Signal sdkComboProducerSignal{};
 #endif
   std::shared_ptr<SampleFrameOwner> m_frameOwner;
   std::uint64_t m_inputGeneration=0,m_sourceFrameIndex=0;
@@ -1498,6 +1531,7 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--verify-sdk-combined")){
       g_sdkCombo=true;g_sdkSr=true;g_srOnly=false;g_directFG=true;g_verifyDirectFG=true;g_frameLimit=6;
     }
+    if(!strcmp(argv[i],"--cancel-combined-fg-frame")&&i+1<argc)g_cancelCombinedFrame=std::max(0,atoi(argv[++i]));
 #endif
     if(!strcmp(argv[i],"--sdk-sr-reject-frame")&&i+1<argc)g_sdkSrReject=std::max(0,atoi(argv[++i]));
 #endif
@@ -1515,8 +1549,8 @@ int main(int argc, char** argv)
   }
   g_srOnly=g_srOnly&&!g_verifyFG;
 #ifdef FRAMELAB_INSTALLED_COMBO
-  if(g_sdkCombo&&g_sdkHandoff!=SdkHandoff::none) {
-    std::fputs("Combined verification requires one command stream\n",stderr);
+  if(g_cancelCombinedFrame>=0&&(!g_sdkCombo||g_sdkHandoff!=SdkHandoff::sameFamily||g_sdkSrReject==g_cancelCombinedFrame)) {
+    std::fputs("Combined cancellation requires an accepted SR frame and a same-family consumer queue\n",stderr);
     return 2;
   }
 #endif
@@ -1873,11 +1907,11 @@ int main(int argc, char** argv)
 
       VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
       beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-      vkBeginCommandBuffer(cmd, &beginInfo);
+      NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
       app.renderFrame(cmd, frame);
 
-      vkEndCommandBuffer(cmd);
+      app.endFrameRecording(cmd);
 
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::eRenderSubmitEnd, *frame);
     }
@@ -1917,9 +1951,13 @@ int main(int argc, char** argv)
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
 #ifdef FRAMELAB_INSTALLED_COMBO
     if(g_sdkCombo) {
-      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&app.directFG.evaluations==app.srSuccesses;
-      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_evaluations=%u generated=%u passed=%d\n",
-                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,app.directFG.verified,int(passed));
+      const unsigned expectedCancelled=g_cancelCombinedFrame>=0?1u:0u;
+      const unsigned completed=app.directFG.evaluations-app.sdkComboFgCancelled;
+      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&app.directFG.evaluations==app.srSuccesses&&
+          app.sdkComboFgCancelled==expectedCancelled&&app.directRealPresents==verifiedFrames;
+      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_recorded=%u fg_completed=%u fg_cancelled=%u generated=%u passed=%d\n",
+                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,completed,app.sdkComboFgCancelled,
+                  app.directFG.verified,int(passed));
     }
 #endif
     printf("VERIFY_FRAMEINPUTS rejected=%u expected_rejections=%u in_flight=%d\n",app.directFG.rejectedFrames,expectedRejections,int(app.directFG.hasInFlightInputs()));
@@ -1927,12 +1965,19 @@ int main(int argc, char** argv)
   }
   app.destroy();
 
-  // Shut down Streamline before destroying Vulkan device, so that it can clean up its resources properly
-  slShutdown();
+  const auto streamlineShutdown=slShutdown();
+  if(streamlineShutdown!=sl::Result::eOk) {
+    std::fprintf(stderr,"Streamline shutdown failed (%d)\n",int(streamlineShutdown));
+    verifyPassed=false;
+  }
 
   vkDestroySurfaceKHR(context.m_instance, surface, nullptr);
 
   if(validationMessenger){
+    // Keep debug reporting active while the device destroys its children.
+    NVVK_CHECK(vkDeviceWaitIdle(context.m_device));
+    vkDestroyDevice(context.m_device,nullptr);
+    context.m_device=VK_NULL_HANDLE;
     auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(context.m_instance,"vkDestroyDebugUtilsMessengerEXT"));destroy(context.m_instance,validationMessenger,nullptr);
     printf("SAMPLE_VALIDATION_SUMMARY errors=%u warnings=%u\n",g_validationErrors.load(),g_validationWarnings.load());if(g_validationErrors)verifyPassed=false;
   }
