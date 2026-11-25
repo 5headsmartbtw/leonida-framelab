@@ -1,18 +1,23 @@
 # Architecture
 
+FrameLab separates the portable temporal contract from backend execution. [Repository status and hardware evidence](../README.md) distinguish merged components from work verified in open PRs.
+
 ```mermaid
 flowchart LR
-    A[Known sample renderer] --> B[FrameInputs: IDs, semantics, camera, time, owners]
-    B --> C{Validate contract and native bindings}
-    C -->|valid tested Vulkan profile| D[Direct NVIDIA NGX Evaluate]
-    C -->|missing or unsupported| E[Normal real-frame Present]
-    D --> F[GPU completion and lease retirement]
-    F --> G[Generated plus real Present]
-    H[Future Leonida semantic provider] -. not implemented .-> B
+    A["Host renderer"] --> B["FrameInputs and resource leases"]
+    B --> C{"Validate inputs and check native capability"}
+    C -->|Supported profile| D["Backend records native evaluation"]
+    C -->|Rejected or unsupported| E["Host ordinary rendering"]
+    D --> F["Host submits GPU work"]
+    F --> G["Completion and resource retirement"]
+    G --> H["Host presentation"]
+    E --> H
 ```
 
-The portable contract does not resolve GPU handles. Vulkan binding validation is separate and currently supports ordered producer/consumer recording in the same command buffer and queue. External signal descriptions exist in the schema but the current GPU consumer rejects them until wait/ownership support is implemented and tested.
+The diagram summarizes responsibility and lifetime. The host schedules presentation and any additional GPU reads of the output. Their completion determines when presentation-owned resources can be reused.
 
-Image leases retain actual GBuffer allocations and their allocator. Resource generation, source-frame continuity and reset history prevent stale temporal reuse. A rejected input does not advance the accepted sequence and must not record NGX work. The next valid frame resets history.
+The portable contract validates same-frame inputs, resource generations and temporal history without resolving native GPU handles. A rejected packet leaves the accepted sequence unchanged. The host can render normally and reset history on recovery. A native recording failure may leave partial commands. Discard work that cannot be submitted before cancelling, following the backend contract.
 
-The sample's SR route uses Streamline separately. Combined SR + direct NGX FG is not validated. The normal presenter is a diagnostic reference, not the official Streamline FG pacer. Physical scanout and input latency require separate measurement.
+On main, [D3D12FG](sdk/D3D12_FG.md) records Direct NGX on an application-owned direct list and observes the configured D3D12 fence. [VulkanSR](sdk/VULKAN_SR.md) records Streamline on the configured Vulkan stream and retires against a Vulkan timeline. The older Vulkan FG sample and standalone [Vulkan handoff test](../tests/vulkan-handoff/README.md) exercise separate paths.
+
+The installed Vulkan FG consumer with queue handoff is in [draft #20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). The actual SR → FG chain and its separate-queue variants are verified in [draft #23](https://github.com/5headsmartbtw/leonida-framelab/pull/23) and [draft #27](https://github.com/5headsmartbtw/leonida-framelab/pull/27). [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) remains the extended SyncVal release gate. Installed-client D3D12 presentation is tracked in [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30). The older standalone D3D12 presenter is diagnostic evidence. The host owns display scheduling, and physical scanout and input latency need separate measurement.
