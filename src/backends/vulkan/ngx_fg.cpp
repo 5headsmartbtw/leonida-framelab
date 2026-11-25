@@ -248,6 +248,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_submission(
     if (!fg || !out) return FRAMELAB_INVALID_ARGUMENT;
     if (out->struct_size < sizeof *out || out->abi_version != FRAMELAB_ABI_VERSION)
         return FRAMELAB_ABI_MISMATCH;
+    if (fg->lost) return FRAMELAB_DEVICE_LOST;
     if (fg->phase != Phase::recorded) return FRAMELAB_INVALID_PHASE;
     out->wait_semaphore = fg->producer;
     out->wait_value = fg->waitValue;
@@ -259,6 +260,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_submission(
 FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_mark_submitted(FrameLabVulkanFg* fg, uint64_t value)
 {
     if (!fg || value == UINT64_MAX) return FRAMELAB_INVALID_ARGUMENT;
+    if (fg->lost) return FRAMELAB_DEVICE_LOST;
     if (fg->phase != Phase::recorded) return FRAMELAB_INVALID_PHASE;
     if (value <= fg->lastTicket) return FRAMELAB_INVALID_SYNC;
     if (fg->work == Work::evaluate) framelab_fg_mark_submitted(fg->stream);
@@ -270,6 +272,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_mark_submitted(FrameLabVulkanFg*
 FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_cancel(FrameLabVulkanFg* fg)
 {
     if (!fg) return FRAMELAB_INVALID_ARGUMENT;
+    if (fg->lost) return FRAMELAB_DEVICE_LOST;
     if (fg->phase != Phase::recorded && fg->phase != Phase::record_failed) return FRAMELAB_INVALID_PHASE;
     if (fg->work == Work::evaluate) {
         fg->engine.abandonRecording(fg->priorOutputLayout);
@@ -284,17 +287,17 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_cancel(FrameLabVulkanFg* fg)
 FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_retire(FrameLabVulkanFg* fg)
 {
     if (!fg) return FRAMELAB_INVALID_ARGUMENT;
+    if (fg->lost) return FRAMELAB_DEVICE_LOST;
     if (fg->phase != Phase::submitted) return FRAMELAB_INVALID_PHASE;
     uint64_t reached = 0;
     auto completed = resultFrom(vkGetSemaphoreCounterValue(fg->device, fg->completion, &reached));
-    if (completed == FRAMELAB_DEVICE_LOST) fg->lost = true;
-    else if (completed != FRAMELAB_OK) return completed;
-    else if (reached < fg->lastTicket) return FRAMELAB_NOT_READY;
+    if (completed == FRAMELAB_DEVICE_LOST) return framelab_vulkan_fg_notify_device_lost(fg);
+    if (completed != FRAMELAB_OK) return completed;
+    if (reached < fg->lastTicket) return FRAMELAB_NOT_READY;
 
     if (fg->work == Work::evaluate) {
         try {
-            if (fg->lost) fg->engine.abandonRecording(fg->priorOutputLayout);
-            else fg->engine.onGpuCompleted();
+            fg->engine.onGpuCompleted();
         } catch (const std::bad_alloc&) {
             fg->engine.abandonRecording(fg->engine.currentLayout());
             completed = FRAMELAB_OUT_OF_MEMORY;
@@ -305,7 +308,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_retire(FrameLabVulkanFg* fg)
         framelab_fg_retire(fg->stream);
         if (completed != FRAMELAB_OK) fg->resetHistory();
     } else {
-        fg->ready = !fg->lost;
+        fg->ready = true;
     }
     fg->releasePending();
     return completed;
@@ -314,6 +317,7 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_retire(FrameLabVulkanFg* fg)
 FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_invalidate(FrameLabVulkanFg* fg)
 {
     if (!fg) return FRAMELAB_INVALID_ARGUMENT;
+    if (fg->lost) return FRAMELAB_DEVICE_LOST;
     if (fg->phase != Phase::idle) return FRAMELAB_BUSY;
     fg->resetHistory();
     return FRAMELAB_OK;
@@ -336,5 +340,27 @@ FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_stats(
     if (!fg || !out) return FRAMELAB_INVALID_ARGUMENT;
     *out = {fg->engine.evaluations, fg->engine.verified, fg->engine.errors,
             static_cast<uint32_t>(fg->engine.lastNative)};
+    return FRAMELAB_OK;
+}
+
+FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_notify_device_lost(FrameLabVulkanFg* fg)
+{
+    if (!fg) return FRAMELAB_INVALID_ARGUMENT;
+    fg->lost = true;
+    return FRAMELAB_DEVICE_LOST;
+}
+
+FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_release_lost_device(FrameLabVulkanFg* fg)
+{
+    if (!fg) return FRAMELAB_INVALID_ARGUMENT;
+    fg->lost = true;
+    fg->ready = false;
+    if (fg->work == Work::evaluate) {
+        fg->engine.abandonRecording(fg->priorOutputLayout);
+        if (fg->phase == Phase::submitted) framelab_fg_retire(fg->stream);
+        else framelab_fg_cancel(fg->stream);
+    }
+    fg->releasePending();
+    fg->resetHistory();
     return FRAMELAB_OK;
 }
