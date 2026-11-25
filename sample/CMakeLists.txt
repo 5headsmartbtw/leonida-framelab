@@ -11,6 +11,10 @@ set(CMAKE_CXX_STANDARD 20)
 
 set(STREAMLINE_MANUAL_HOOKING ON CACHE BOOL "Use manual hooking method of Streamline instead of linking against the interposer")
 set(STREAMLINE_ROOT_DIR "" CACHE PATH "Streamline SDK root")
+option(FRAMELAB_USE_INSTALLED_VULKAN_SR "Exercise Vulkan SR through the installed SDK" OFF)
+if(FRAMELAB_USE_INSTALLED_VULKAN_SR)
+  find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED COMPONENTS VulkanSR)
+endif()
 set(DLSS_NGX_SDK_ROOT "" CACHE PATH "DLSS SDK root with NGX FG headers")
 set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
 
@@ -169,6 +173,14 @@ install(FILES ${STREAMLINE_DLLS} CONFIGURATIONS Debug DESTINATION bin_${ARCH}_de
 # Independent direct-NGX backend.
 target_include_directories(${PROJECT_NAME} BEFORE PRIVATE "${DLSS_NGX_SDK_ROOT}/include")
 target_link_libraries(${PROJECT_NAME} "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" shlwapi advapi32)
+
+if(FRAMELAB_USE_INSTALLED_VULKAN_SR)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE FRAMELAB_USE_INSTALLED_VULKAN_SR)
+  target_link_libraries(${PROJECT_NAME} FrameLab::FrameLab)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:FrameLab::FrameLab>" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+    VERBATIM)
+endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
