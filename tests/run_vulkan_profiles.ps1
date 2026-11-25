@@ -54,8 +54,14 @@ try {
                     if($profileDisplay -and $profileDisplay -ne $signature){throw "$name used a different display or refresh rate"}
                     $profileDisplay=$signature
                 }
-                if($Mode -eq 'soak' -and -not (Select-String $stdout 'SAMPLE_VALIDATION_SUMMARY errors=0 warnings=0' -Quiet)){
-                    $failed=$true
+                if($Mode -eq 'soak') {
+                    $runtimeLog=Join-Path $dir.FullName 'streamline/sl.log'
+                    $runtimeFailure=(Test-Path -LiteralPath $runtimeLog) -and
+                        (Select-String -LiteralPath $runtimeLog -Pattern 'Exception detected|leaked objects that have not been destroyed' -Quiet)
+                    if($runtimeFailure -or (Get-Item -LiteralPath $stderr).Length -ne 0 -or
+                       -not (Select-String -LiteralPath $stdout -Pattern 'SAMPLE_VALIDATION_SUMMARY errors=0 warnings=0' -Quiet)){
+                        $failed=$true
+                    }
                 }
             } finally {
                 if(-not $p.HasExited){$p.Kill();$p.WaitForExit()}
