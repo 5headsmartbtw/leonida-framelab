@@ -75,7 +75,6 @@ static bool g_srOnly = false;
 #ifdef FRAMELAB_INSTALLED_COMBO
 static bool g_sdkCombo=false;
 static int g_cancelCombinedFrame=-1;
-static bool g_cancelledCombinedFrame=false;
 #else
 static constexpr bool g_sdkCombo=false;
 #endif
@@ -728,7 +727,6 @@ public:
             sdkConsumerCommands=createTempCmdBuffer();
             cmd=sdkConsumerCommands;
             directReady=false;
-            g_cancelledCombinedFrame=true;
             std::printf("PUBLIC_VULKAN_COMBO_CANCEL source=%llu\n",
                         static_cast<unsigned long long>(inputs.frame.frameIndex));
           }
@@ -1952,11 +1950,12 @@ int main(int argc, char** argv)
     passed=passed&&app.directFG.rejectedFrames==expectedRejections&&!app.directFG.hasInFlightInputs();
 #ifdef FRAMELAB_INSTALLED_COMBO
     if(g_sdkCombo) {
-      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&
-          app.directFG.evaluations+app.sdkComboFgCancelled==app.srSuccesses;
-      if(g_cancelCombinedFrame>=0)passed=passed&&g_cancelledCombinedFrame;
-      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_evaluations=%u fg_cancelled=%u generated=%u passed=%d\n",
-                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,app.sdkComboFgCancelled,
+      const unsigned expectedCancelled=g_cancelCombinedFrame>=0?1u:0u;
+      const unsigned completed=app.directFG.evaluations-app.sdkComboFgCancelled;
+      passed=passed&&verifyPassed&&app.sdkComboInputs==app.srSuccesses&&app.directFG.evaluations==app.srSuccesses&&
+          app.sdkComboFgCancelled==expectedCancelled&&app.directRealPresents==verifiedFrames;
+      std::printf("VERIFY_PUBLIC_VULKAN_COMBO sr_evaluations=%u mapped=%u fg_recorded=%u fg_completed=%u fg_cancelled=%u generated=%u passed=%d\n",
+                  app.srSuccesses,app.sdkComboInputs,app.directFG.evaluations,completed,app.sdkComboFgCancelled,
                   app.directFG.verified,int(passed));
     }
 #endif
