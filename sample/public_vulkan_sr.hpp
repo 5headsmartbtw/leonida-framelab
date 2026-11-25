@@ -97,16 +97,40 @@ public:
         return true;
     }
 
+    struct Signal { VkSemaphore timeline{}; uint64_t value{}; };
+
+    Signal signal() const
+    {
+        if(!pending)return {};
+        Signal signal{VK_NULL_HANDLE,ticket+1};
+        check(framelab_vulkan_sr_completion(sr,&signal.timeline));
+        return signal;
+    }
+
+    void submitted(Signal signal)
+    {
+        if(!signal.timeline)return;
+        check(framelab_vulkan_sr_mark_submitted(sr,signal.value));
+        ticket=signal.value;
+    }
+
+    void completed(Signal signal)
+    {
+        if(!signal.timeline)return;
+        check(framelab_vulkan_sr_retire(sr));
+        pending=false;
+        if(capture)inspectReadback();
+    }
+
     VkResult submit(VkQueue queue, VkSubmitInfo info, VkFence fence)
     {
         if (!pending) return vkQueueSubmit(queue, 1, &info, fence);
         if (info.waitSemaphoreCount != 1 || info.signalSemaphoreCount != 1 || info.pNext)
             throw std::runtime_error("unexpected SR sample submit configuration");
-        VkSemaphore timeline{};
-        check(framelab_vulkan_sr_completion(sr, &timeline));
+        const auto work=signal();
         const uint64_t waitValue = 0;
-        const VkSemaphore signals[]{info.pSignalSemaphores[0], timeline};
-        const uint64_t signalValues[]{0, ++ticket};
+        const VkSemaphore signals[]{info.pSignalSemaphores[0], work.timeline};
+        const uint64_t signalValues[]{0, work.value};
         const VkTimelineSemaphoreSubmitInfo values{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
             nullptr, 1, &waitValue, 2, signalValues};
         info.pNext = &values;
@@ -117,12 +141,10 @@ public:
             // The caller resets or discards the command buffer before asking the backend to cancel.
             return result;
         }
-        check(framelab_vulkan_sr_mark_submitted(sr, ticket));
-        const VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,nullptr,0,1,&timeline,&ticket};
+        submitted(work);
+        const VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,nullptr,0,1,&work.timeline,&work.value};
         vkcheck(vkWaitSemaphores(dev, &wait, 30000000000ull));
-        check(framelab_vulkan_sr_retire(sr));
-        pending = false;
-        if (capture) inspectReadback();
+        completed(work);
         return result;
     }
 

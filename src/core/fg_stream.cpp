@@ -31,7 +31,7 @@ struct FrameLabFgStream {
 
 std::shared_ptr<const void> framelab::detail::retainLease(const FrameLabLease* lease) noexcept
 {
-    return lease ? lease->owner : nullptr;
+    return lease ? lease->owner : std::shared_ptr<const void>{};
 }
 
 const fi::FrameInputs* framelab::detail::preparedInputs(const FrameLabFgStream* stream) noexcept

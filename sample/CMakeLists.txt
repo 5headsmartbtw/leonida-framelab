@@ -17,14 +17,20 @@ if(FRAMELAB_USE_INSTALLED_VULKAN_SR)
 endif()
 set(DLSS_NGX_SDK_ROOT "" CACHE PATH "DLSS SDK root with NGX FG headers")
 set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
+option(FRAMELAB_USE_INSTALLED_VULKAN_FG "Exercise the installed VulkanFG C ABI on the reference scene" OFF)
+if(FRAMELAB_USE_INSTALLED_VULKAN_FG)
+  find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED COMPONENTS VulkanFG)
+endif()
 
 if(NOT EXISTS "${STREAMLINE_ROOT_DIR}/include/sl.h" OR
    NOT EXISTS "${STREAMLINE_ROOT_DIR}/bin/x64/sl.interposer.dll")
   message(FATAL_ERROR "Set STREAMLINE_ROOT_DIR to the Streamline SDK with include/ and bin/x64/.")
 endif()
-if(NOT EXISTS "${DLSS_NGX_SDK_ROOT}/include/nvsdk_ngx_helpers_dlssg_vk.h" OR
-   NOT EXISTS "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
-  message(FATAL_ERROR "Set DLSS_NGX_SDK_ROOT to the DLSS SDK with Vulkan FG headers and the x64 NGX import library.")
+if(NOT FRAMELAB_USE_INSTALLED_VULKAN_FG)
+  if(NOT EXISTS "${DLSS_NGX_SDK_ROOT}/include/nvsdk_ngx_helpers_dlssg_vk.h" OR
+     NOT EXISTS "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+    message(FATAL_ERROR "Set DLSS_NGX_SDK_ROOT to the DLSS SDK with Vulkan FG headers and the x64 NGX import library.")
+  endif()
 endif()
 
 #--------------------------------------------------------------------------------------------------
@@ -171,8 +177,16 @@ install(FILES ${STREAMLINE_DLLS} CONFIGURATIONS Release DESTINATION bin_${ARCH})
 install(FILES ${STREAMLINE_DLLS} CONFIGURATIONS Debug DESTINATION bin_${ARCH}_debug)
 
 # Independent direct-NGX backend.
-target_include_directories(${PROJECT_NAME} BEFORE PRIVATE "${DLSS_NGX_SDK_ROOT}/include")
-target_link_libraries(${PROJECT_NAME} "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" shlwapi advapi32)
+if(FRAMELAB_USE_INSTALLED_VULKAN_FG)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE FRAMELAB_USE_INSTALLED_VULKAN_FG)
+  target_link_libraries(${PROJECT_NAME} FrameLab::FrameLab)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:FrameLab::FrameLab>" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+    VERBATIM)
+else()
+  target_include_directories(${PROJECT_NAME} BEFORE PRIVATE "${DLSS_NGX_SDK_ROOT}/include")
+  target_link_libraries(${PROJECT_NAME} "${DLSS_NGX_SDK_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" shlwapi advapi32)
+endif()
 
 if(FRAMELAB_USE_INSTALLED_VULKAN_SR)
   target_compile_definitions(${PROJECT_NAME} PRIVATE FRAMELAB_USE_INSTALLED_VULKAN_SR)
