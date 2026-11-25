@@ -317,10 +317,11 @@ public:
   {
     vkDeviceWaitIdle(m_device);
 
-    if(g_directFG)directFG.shutdown();
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_SR
+    // Free Streamline's SR viewport while NGX is still initialized.
     if(g_sdkSr)sdkSr.shutdown();
 #endif
+    if(g_directFG)directFG.shutdown();
     releaseSrPresentSemaphores();
     destroyImages();
     destroyPipelines();
@@ -1964,12 +1965,19 @@ int main(int argc, char** argv)
   }
   app.destroy();
 
-  // Shut down Streamline before destroying Vulkan device, so that it can clean up its resources properly
-  slShutdown();
+  const auto streamlineShutdown=slShutdown();
+  if(streamlineShutdown!=sl::Result::eOk) {
+    std::fprintf(stderr,"Streamline shutdown failed (%d)\n",int(streamlineShutdown));
+    verifyPassed=false;
+  }
 
   vkDestroySurfaceKHR(context.m_instance, surface, nullptr);
 
   if(validationMessenger){
+    // Keep debug reporting active while the device destroys its children.
+    NVVK_CHECK(vkDeviceWaitIdle(context.m_device));
+    vkDestroyDevice(context.m_device,nullptr);
+    context.m_device=VK_NULL_HANDLE;
     auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(context.m_instance,"vkDestroyDebugUtilsMessengerEXT"));destroy(context.m_instance,validationMessenger,nullptr);
     printf("SAMPLE_VALIDATION_SUMMARY errors=%u warnings=%u\n",g_validationErrors.load(),g_validationWarnings.load());if(g_validationErrors)verifyPassed=false;
   }
