@@ -63,6 +63,8 @@ static bool g_validation=false;
 enum class SdkHandoff { none, sameFamily, crossFamily };
 static SdkHandoff g_sdkHandoff=SdkHandoff::none;
 static bool g_cancelFirstFgResize=false;
+static bool g_failFirstFgResizeSubmit=false;
+static bool g_probeFgSubmitLoss=false;
 #endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
@@ -151,6 +153,7 @@ public:
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
   PublicVulkanFg directFG;
   VkCommandBuffer sdkConsumerCommands{};
+  bool sdkLossExercised=false;
 #else
   DirectNgxFG directFG;
 #endif
@@ -916,6 +919,18 @@ public:
       VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.waitSemaphoreCount=si.signalSemaphoreCount=si.commandBufferCount=1;si.pWaitSemaphores=&read;si.pWaitDstStageMask=&stage;si.pSignalSemaphores=&write;si.pCommandBuffers=&m_commandBuffers[i];
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
       if(sdkConsumerCommands)si.pCommandBuffers=&sdkConsumerCommands;
+      if(g_probeFgSubmitLoss&&m_sourceFrameIndex==3) {
+        const auto injected=directFG.submit(si,m_waitFences[i],VK_NULL_HANDLE,0,
+          [](VkQueue,uint32_t,const VkSubmitInfo*,VkFence) -> VkResult {
+            return VK_ERROR_DEVICE_LOST;
+          });
+        if(injected!=VK_ERROR_DEVICE_LOST)
+          throw std::runtime_error("the loss probe did not return its injected result");
+        // The prior frame has drained. This recording never reached the driver.
+        directFG.probeLostRecording(*si.pCommandBuffers);
+        sdkLossExercised=true;
+        return;
+      }
 #ifdef FRAMELAB_INSTALLED_COMBO
       const auto srSignal=g_sdkCombo?sdkSr.signal():PublicVulkanSrSample::Signal{};
       NVVK_CHECK(directFG.submit(si,m_waitFences[i],srSignal.timeline,srSignal.value));
@@ -935,6 +950,9 @@ public:
 #endif
     };
     submitPresent(directReady);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(sdkLossExercised)return;
+#endif
     directFG.onGpuCompleted();
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
     if(sdkConsumerCommands){
@@ -1325,8 +1343,30 @@ private:
       NVVK_CHECK(vkEndCommandBuffer(cmd));
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
       submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
-      NVVK_CHECK(directFG.submit(submit,VK_NULL_HANDLE));
-      NVVK_CHECK(vkQueueWaitIdle(m_queue));
+      if(g_failFirstFgResizeSubmit) {
+        g_failFirstFgResizeSubmit=false;
+        const auto injected=directFG.submit(submit,VK_NULL_HANDLE,VK_NULL_HANDLE,0,
+          [](VkQueue,uint32_t,const VkSubmitInfo*,VkFence) -> VkResult {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+          });
+        if(injected!=VK_ERROR_OUT_OF_HOST_MEMORY)
+          throw std::runtime_error("the rejected-submit test did not return its injected result");
+        vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
+        if(!directFG.cancelUnsubmittedResize())
+          throw std::runtime_error("the SDK did not retain the rejected command's recording");
+        std::puts("PUBLIC_VULKAN_FG injected_submit_oom=1 native_recording_discarded=1");
+        cmd=createTempCmdBuffer();
+        directFG.resize(cmd,size,g_verifyDirectFG);
+        NVVK_CHECK(vkEndCommandBuffer(cmd));
+      }
+      VkFence completion{};
+      const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+      NVVK_CHECK(vkCreateFence(m_device,&fenceInfo,nullptr,&completion));
+      NVVK_CHECK(directFG.submit(submit,completion));
+      const auto drained=vkWaitForFences(m_device,1,&completion,VK_TRUE,30000000000ull);
+      if(drained==VK_TIMEOUT)throw std::runtime_error("Vulkan FG resize took more than 30 seconds");
+      NVVK_CHECK(drained);
+      vkDestroyFence(m_device,completion,nullptr);
       directFG.onGpuCompleted();
       vkFreeCommandBuffers(m_device,m_cmdPool,1,&cmd);
 #else
@@ -1485,9 +1525,8 @@ private:
   glm::mat4 m_viewMatrixPrev{1.f};
 };
 
-int main(int argc, char** argv)
+static int runSample(int argc,char** argv)
 {
-  std::setvbuf(stdout, nullptr, _IONBF, 0);
   for(int i=1;i<argc;++i){
     if(!strcmp(argv[i],"--streamline")||!strcmp(argv[i],"--verify-sr")||!strcmp(argv[i],"--verify-fg"))g_directFG=false;
     if(!strcmp(argv[i],"--verify-fg"))g_verifyFG=true;
@@ -1506,6 +1545,7 @@ int main(int argc, char** argv)
     if(!strcmp(argv[i],"--sdk-handoff-same"))g_sdkHandoff=SdkHandoff::sameFamily;
     if(!strcmp(argv[i],"--sdk-handoff-cross"))g_sdkHandoff=SdkHandoff::crossFamily;
     if(!strcmp(argv[i],"--sdk-cancel-first-resize"))g_cancelFirstFgResize=true;
+    if(!strcmp(argv[i],"--sdk-fail-first-resize-submit"))g_failFirstFgResizeSubmit=true;
 #endif
     if(!strcmp(argv[i],"--test-missing-depth-frame")&&i+1<argc)g_missingDepthFrame=std::max(0,atoi(argv[++i]));
     if(!strcmp(argv[i],"--no-vsync"))g_initialVsync=false;
@@ -1888,6 +1928,9 @@ int main(int argc, char** argv)
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::ePresentStart, *frame);
 
       app.submitFrame();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(app.sdkLossExercised)break;
+#endif
       ++verifiedFrames;
       if((verifySr && verifiedFrames >= (g_verifyFG?12u:120u))||(g_frameLimit&&verifiedFrames>=g_frameLimit))glfwSetWindowShouldClose(window,GLFW_TRUE);
 
@@ -1945,5 +1988,34 @@ int main(int argc, char** argv)
   glfwDestroyWindow(window);
   glfwTerminate();
 
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  if(g_probeFgSubmitLoss) {
+    if(!app.sdkLossExercised||drained!=VK_SUCCESS||g_validationErrors)return 1;
+    std::puts("PUBLIC_VULKAN_FG simulated_loss_teardown=1");
+    return 0;
+  }
+#endif
   return verifyPassed ? 0 : 1;
+}
+
+int main(int argc,char** argv)
+{
+  std::setvbuf(stdout,nullptr,_IONBF,0);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  bool lossProbe=false;
+  for(int i=1;i<argc;++i)lossProbe=lossProbe||!std::strcmp(argv[i],"--sdk-probe-submit-loss");
+  if(lossProbe) {
+    if(argc!=2)return 2;
+    // Run a fixed single-stream diagnostic profile. Recovery is controlled by the host.
+    char verify[]="--verify-direct-fg";
+    char frames[]="--frames";
+    char count[]="6";
+    char validation[]="--validation";
+    char vsync[]="--no-vsync";
+    char* arguments[]{argv[0],verify,frames,count,validation,vsync,nullptr};
+    g_probeFgSubmitLoss=true;
+    return runSample(6,arguments);
+  }
+#endif
+  return runSample(argc,argv);
 }

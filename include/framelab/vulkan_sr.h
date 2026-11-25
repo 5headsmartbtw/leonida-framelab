@@ -72,6 +72,9 @@ FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_mark_submitted(
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_cancel(FrameLabVulkanSr* sr);
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_retire(FrameLabVulkanSr* sr);
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_invalidate(FrameLabVulkanSr* sr);
+/* Mark the device as lost when a host Vulkan call reports VK_ERROR_DEVICE_LOST.
+ * This returns FRAMELAB_DEVICE_LOST and keeps outstanding leases intact. */
+FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_sr_notify_device_lost(FrameLabVulkanSr* sr);
 /* After device loss, the host stops submissions, drains the device and discards host recordings.
  * Release retained packets without reusing the device or its Streamline viewport. Destroy
  * this handle, shut down the old runtime/device and create a fresh backend to resume SR. */

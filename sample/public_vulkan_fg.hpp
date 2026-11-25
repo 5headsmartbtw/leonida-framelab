@@ -69,7 +69,8 @@ public:
     if(!fg)return;
     const auto result=framelab_vulkan_fg_record_resize(fg,cmd,{extent.width,extent.height},diagnostics);
     if(result!=FRAMELAB_OK) {
-      framelab_vulkan_fg_cancel(fg);
+      if(result!=FRAMELAB_DEVICE_LOST && vkResetCommandBuffer(cmd,0)==VK_SUCCESS)
+        framelab_vulkan_fg_cancel(fg);
       check(result);
     }
     checking=diagnostics;
@@ -191,9 +192,9 @@ public:
     }
     reset=true;
     if(result==FRAMELAB_NATIVE_FAILURE||result==FRAMELAB_OUT_OF_MEMORY||result==FRAMELAB_DEVICE_LOST) {
-      // The host must discard the command buffer after a partially recorded native failure.
-      vkEndCommandBuffer(cmd);
-      framelab_vulkan_fg_cancel(fg);
+      // Ending a command buffer still leaves its native commands executable.
+      if(result!=FRAMELAB_DEVICE_LOST && vkResetCommandBuffer(cmd,0)==VK_SUCCESS)
+        framelab_vulkan_fg_cancel(fg);
       check(result);
     }
     if(external&&crossFamily)ownership(cmd,inputs,producerFamily,consumerFamily,true,true);
@@ -209,9 +210,10 @@ public:
     if(fg)check(framelab_vulkan_fg_invalidate(fg));
   }
 
-  VkResult submit(VkSubmitInfo info,VkFence fence,VkSemaphore srTimeline=VK_NULL_HANDLE,uint64_t srValue=0)
+  VkResult submit(VkSubmitInfo info,VkFence fence,VkSemaphore srTimeline=VK_NULL_HANDLE,uint64_t srValue=0,
+                  PFN_vkQueueSubmit queueSubmit=vkQueueSubmit)
   {
-    if(!pending&&!external&&!srTimeline)return vkQueueSubmit(consumer,1,&info,fence);
+    if(!pending&&!external&&!srTimeline)return queueSubmit(consumer,1,&info,fence);
     FrameLabVulkanFgSubmission requirements{sizeof requirements,FRAMELAB_ABI_VERSION};
     if(pending)check(framelab_vulkan_fg_submission(fg,&requirements));
     else if(external) {
@@ -240,7 +242,7 @@ public:
     }
     if(pending) {
       signals[signalCount]=requirements.completion_timeline;
-      signalValues[signalCount++]=++completionTicket;
+      signalValues[signalCount++]=completionTicket+1;
     }
     if(srTimeline) {
       signals[signalCount]=srTimeline;
@@ -251,13 +253,11 @@ public:
     info.pNext=&timeline;
     info.waitSemaphoreCount=waitCount;info.pWaitSemaphores=waits;info.pWaitDstStageMask=stages;
     info.signalSemaphoreCount=signalCount;info.pSignalSemaphores=signals;
-    const auto result=vkQueueSubmit(consumer,1,&info,fence);
-    if(result!=VK_SUCCESS) {
-      if(pending)framelab_vulkan_fg_cancel(fg);
-      pending=false;
-      return result;
-    }
-    const auto ack=pending?framelab_vulkan_fg_mark_submitted(fg,completionTicket):FRAMELAB_OK;
+    const auto result=queueSubmit(consumer,1,&info,fence);
+    if(result==VK_ERROR_DEVICE_LOST && fg)framelab_vulkan_fg_notify_device_lost(fg);
+    // The host still owns an executable command buffer on a rejected submission.
+    if(result!=VK_SUCCESS)return result;
+    const auto ack=pending?framelab_vulkan_fg_mark_submitted(fg,++completionTicket):FRAMELAB_OK;
     if(probe) {
       releasesBeforeProbe=releasedFrameLeases;
       frameLease.reset();
@@ -272,6 +272,27 @@ public:
     }
     check(ack);
     return result;
+  }
+
+  void probeLostRecording(VkCommandBuffer unsubmitted)
+  {
+    if(!pending||!framePending||external)
+      throw std::runtime_error("loss probe requires a recorded single-stream evaluation");
+    const auto before=releasedFrameLeases;
+    frameLease.reset();
+    if(framelab_vulkan_fg_retire(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_cancel(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_invalidate(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_destroy(fg)!=FRAMELAB_BUSY||
+       releasedFrameLeases!=before)
+      throw std::runtime_error("loss probe did not retain the recorded frame");
+    vkcheck(vkResetCommandBuffer(unsubmitted,0));
+    check(framelab_vulkan_fg_release_lost_device(fg));
+    if(releasedFrameLeases!=before+1)
+      throw std::runtime_error("loss probe did not release the discarded frame");
+    pending=false;
+    framePending=false;
+    std::puts("PUBLIC_VULKAN_FG simulated_loss propagated=1 pending_lease_preserved=1 discarded_lease_released=1");
   }
 
   void onGpuCompleted()

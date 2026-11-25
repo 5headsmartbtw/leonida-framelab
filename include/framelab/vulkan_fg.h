@@ -91,6 +91,11 @@ FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_mark_submitted(
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_cancel(FrameLabVulkanFg* fg);
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_retire(FrameLabVulkanFg* fg);
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_invalidate(FrameLabVulkanFg* fg);
+/* Report a lost device without dropping GPU leases or waiting for work. */
+FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_notify_device_lost(FrameLabVulkanFg* fg);
+/* After stopping submissions, draining the device and discarding host recordings,
+ * release retained packets. Destroy this handle and recreate the device and resources. */
+FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_release_lost_device(FrameLabVulkanFg* fg);
 /* Borrowed until the next resize/destroy. The host keeps any later GPU users alive. */
 FRAMELAB_API FrameLabStatus FRAMELAB_CALL framelab_vulkan_fg_output(
     const FrameLabVulkanFg* fg, FrameLabVulkanFgOutput* out_output);
