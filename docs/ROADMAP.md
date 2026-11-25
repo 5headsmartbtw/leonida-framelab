@@ -2,6 +2,10 @@
 
 Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/issues/4) to claim tasks and post progress. See the [contribution rules](../CONTRIBUTING.md) before submitting changes.
 
+## Independent Vulkan handoff coverage
+
+QA-02 reproduced all four standalone Vulkan queue-handoff cases on the Radeon 860M and the Ryzen 9 9950X3D integrated GPU. Both AMD reports verified exact 64-pixel readback, consumer fence completion and zero diagnostics with synchronization validation enabled. The AMD results extend the standalone RTX 2050 and independent RTX 4070 Ti SUPER evidence. [Device results and original reports](evidence/independent-vulkan-handoff.md#cross-vendor-validation)
+
 ## SDK track
 
 | Workstream | Priority | Implementation boundary |
