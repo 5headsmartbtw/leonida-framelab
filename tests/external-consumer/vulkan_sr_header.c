@@ -11,5 +11,7 @@ int main(void)
     config.abi_version = FRAMELAB_ABI_VERSION;
     if (framelab_vulkan_sr_create(&config, &sr) != FRAMELAB_INVALID_ARGUMENT || sr)
         return 2;
-    return framelab_vulkan_sr_destroy(sr) == FRAMELAB_OK ? 0 : 3;
+    if (framelab_vulkan_sr_release_lost_device(sr) != FRAMELAB_INVALID_ARGUMENT)
+        return 3;
+    return framelab_vulkan_sr_destroy(sr) == FRAMELAB_OK ? 0 : 4;
 }
