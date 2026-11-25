@@ -5,7 +5,7 @@
 
 FrameLab provides an installable C ABI for temporal frame metadata, GPU resource lifetime and NVIDIA DLSS integration. External renderers can link from C or C++ using public C headers or the raw Rust bindings. Original synthetic workloads exercise native Super Resolution (SR), Frame Generation (FG), image readback and fallback on specific tested profiles.
 
-The project grew out of research for [Leonida](https://github.com/ItsNotRexed/Leonida). FrameLab builds and tests independently of downstream renderers. Integration with a GTA VI renderer remains research, and the SDK does not install game mods or establish game compatibility.
+The project grew out of research for [Leonida](docs/integrations/leonida/README.md). FrameLab builds and tests independently of downstream renderers. Integration with a GTA VI renderer remains research, and the SDK does not install game mods or establish game compatibility.
 
 ## SDK and backend status
 
