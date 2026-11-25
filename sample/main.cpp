@@ -64,6 +64,7 @@ enum class SdkHandoff { none, sameFamily, crossFamily };
 static SdkHandoff g_sdkHandoff=SdkHandoff::none;
 static bool g_cancelFirstFgResize=false;
 static bool g_failFirstFgResizeSubmit=false;
+static bool g_probeFgSubmitLoss=false;
 #endif
 static bool g_initialVsync=true;
 static std::atomic<unsigned> g_validationErrors{0},g_validationWarnings{0};
@@ -152,6 +153,7 @@ public:
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
   PublicVulkanFg directFG;
   VkCommandBuffer sdkConsumerCommands{};
+  bool sdkLossExercised=false;
 #else
   DirectNgxFG directFG;
 #endif
@@ -917,6 +919,18 @@ public:
       VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.waitSemaphoreCount=si.signalSemaphoreCount=si.commandBufferCount=1;si.pWaitSemaphores=&read;si.pWaitDstStageMask=&stage;si.pSignalSemaphores=&write;si.pCommandBuffers=&m_commandBuffers[i];
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
       if(sdkConsumerCommands)si.pCommandBuffers=&sdkConsumerCommands;
+      if(g_probeFgSubmitLoss&&m_sourceFrameIndex==3) {
+        const auto injected=directFG.submit(si,m_waitFences[i],VK_NULL_HANDLE,0,
+          [](VkQueue,uint32_t,const VkSubmitInfo*,VkFence) -> VkResult {
+            return VK_ERROR_DEVICE_LOST;
+          });
+        if(injected!=VK_ERROR_DEVICE_LOST)
+          throw std::runtime_error("the loss probe did not return its injected result");
+        // The prior frame has drained. This recording never reached the driver.
+        directFG.probeLostRecording(*si.pCommandBuffers);
+        sdkLossExercised=true;
+        return;
+      }
 #ifdef FRAMELAB_INSTALLED_COMBO
       const auto srSignal=g_sdkCombo?sdkSr.signal():PublicVulkanSrSample::Signal{};
       NVVK_CHECK(directFG.submit(si,m_waitFences[i],srSignal.timeline,srSignal.value));
@@ -936,6 +950,9 @@ public:
 #endif
     };
     submitPresent(directReady);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+    if(sdkLossExercised)return;
+#endif
     directFG.onGpuCompleted();
 #ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
     if(sdkConsumerCommands){
@@ -1508,9 +1525,8 @@ private:
   glm::mat4 m_viewMatrixPrev{1.f};
 };
 
-int main(int argc, char** argv)
+static int runSample(int argc,char** argv)
 {
-  std::setvbuf(stdout, nullptr, _IONBF, 0);
   for(int i=1;i<argc;++i){
     if(!strcmp(argv[i],"--streamline")||!strcmp(argv[i],"--verify-sr")||!strcmp(argv[i],"--verify-fg"))g_directFG=false;
     if(!strcmp(argv[i],"--verify-fg"))g_verifyFG=true;
@@ -1912,6 +1928,9 @@ int main(int argc, char** argv)
       SAMPLE_SET_MARKER(SAMPLE_MARKER_TYPE::ePresentStart, *frame);
 
       app.submitFrame();
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+      if(app.sdkLossExercised)break;
+#endif
       ++verifiedFrames;
       if((verifySr && verifiedFrames >= (g_verifyFG?12u:120u))||(g_frameLimit&&verifiedFrames>=g_frameLimit))glfwSetWindowShouldClose(window,GLFW_TRUE);
 
@@ -1969,5 +1988,34 @@ int main(int argc, char** argv)
   glfwDestroyWindow(window);
   glfwTerminate();
 
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  if(g_probeFgSubmitLoss) {
+    if(!app.sdkLossExercised||drained!=VK_SUCCESS||g_validationErrors)return 1;
+    std::puts("PUBLIC_VULKAN_FG simulated_loss_teardown=1");
+    return 0;
+  }
+#endif
   return verifyPassed ? 0 : 1;
+}
+
+int main(int argc,char** argv)
+{
+  std::setvbuf(stdout,nullptr,_IONBF,0);
+#ifdef FRAMELAB_USE_INSTALLED_VULKAN_FG
+  bool lossProbe=false;
+  for(int i=1;i<argc;++i)lossProbe=lossProbe||!std::strcmp(argv[i],"--sdk-probe-submit-loss");
+  if(lossProbe) {
+    if(argc!=2)return 2;
+    // Run a fixed single-stream diagnostic profile. Recovery is controlled by the host.
+    char verify[]="--verify-direct-fg";
+    char frames[]="--frames";
+    char count[]="6";
+    char validation[]="--validation";
+    char vsync[]="--no-vsync";
+    char* arguments[]{argv[0],verify,frames,count,validation,vsync,nullptr};
+    g_probeFgSubmitLoss=true;
+    return runSample(6,arguments);
+  }
+#endif
+  return runSample(argc,argv);
 }

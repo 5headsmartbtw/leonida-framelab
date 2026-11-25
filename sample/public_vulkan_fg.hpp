@@ -274,6 +274,27 @@ public:
     return result;
   }
 
+  void probeLostRecording(VkCommandBuffer unsubmitted)
+  {
+    if(!pending||!framePending||external)
+      throw std::runtime_error("loss probe requires a recorded single-stream evaluation");
+    const auto before=releasedFrameLeases;
+    frameLease.reset();
+    if(framelab_vulkan_fg_retire(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_cancel(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_invalidate(fg)!=FRAMELAB_DEVICE_LOST||
+       framelab_vulkan_fg_destroy(fg)!=FRAMELAB_BUSY||
+       releasedFrameLeases!=before)
+      throw std::runtime_error("loss probe did not retain the recorded frame");
+    vkcheck(vkResetCommandBuffer(unsubmitted,0));
+    check(framelab_vulkan_fg_release_lost_device(fg));
+    if(releasedFrameLeases!=before+1)
+      throw std::runtime_error("loss probe did not release the discarded frame");
+    pending=false;
+    framePending=false;
+    std::puts("PUBLIC_VULKAN_FG simulated_loss propagated=1 pending_lease_preserved=1 discarded_lease_released=1");
+  }
+
   void onGpuCompleted()
   {
     if(pending) {
