@@ -22,3 +22,4 @@ jobs:
       - run: cmake --build build --config Release
       - run: ctest --test-dir build -C Release --output-on-failure --no-tests=error
       - run: python scripts/check_repository.py
+      - run: python -m unittest discover -s tests -p test_contributor_claims.py

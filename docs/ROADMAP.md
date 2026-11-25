@@ -8,7 +8,7 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 | --- | --- | --- |
 | SDK-01 | P0 | The public ABI and installed [D3D12 FG](sdk/D3D12_FG.md) and [Vulkan FG](sdk/VULKAN_FG.md) dispatch have reference hardware evidence. Resolve the Vulkan synchronization checks, then extract independent SR dispatch. |
 | SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumers pass on Windows and Linux. |
-| SR-01 | P0 | SR-only passed Vulkan validation on the reference RTX 2050. Extract reusable SR dispatch from this profile. |
+| SR-01 | P0 | The installed [Vulkan SR component](sdk/VULKAN_SR.md) passed the 120-evaluation RTX 2050 profile, readback, resize and history reset. Independent official-runtime validation is tracked in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
 | D3D-01 | P0 | The installed [public D3D12 FG component](sdk/D3D12_FG.md) passed the external consumer, real fence/lifetime checks and matched the old readback. |
 | VK-01 | P1 | The installed FG client verified same-family timeline handoff, cross-family binary handoff and GPU-timeline lease retirement under standard Vulkan validation. Close the SyncVal and cancellation coverage gaps. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
 | FFI-01 | P1 | [Raw Rust FFI](../bindings/rust/README.md) passes C layout and shared-library lifecycle tests on Windows and Linux. |
