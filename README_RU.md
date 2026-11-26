@@ -150,6 +150,14 @@ target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 | `sample/`, `samples/d3d12_fg/`, `experiments/d3d12/` | Пример Vulkan, клиент установленного D3D12 FG и ранние отдельные эксперименты D3D12 |
 | `native/windows/`, `docs/`, `LICENSES/` | Экспериментальный слой Windows, документация и результаты, тексты лицензий |
 
+## Участники проекта
+
+| Участник | Вклад |
+| --- | --- |
+| [@5headsmartbtw](https://github.com/5headsmartbtw) | Основатель, мейнтейнер, архитектура и разработка SDK |
+| [@JoeY54](https://github.com/JoeY54) | Разработка D3D12 SR, исследование Vulkan SyncVal и независимое тестирование GPU |
+| [@akimfomin](https://github.com/akimfomin) | Независимое тестирование Vulkan и координация PortBridge |
+
 ## Лицензия и авторство
 
 Оригинальный код проекта распространяется под **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. Сохраняйте уведомление об авторском праве и текст лицензии. Заимствованные части [NVIDIA vk_streamline](https://github.com/nvpro-samples/vk_streamline) сохраняют Apache-2.0. Порт на основе [dlssg-open](https://github.com/dniminenn/dlssg-open) сохраняет исходное авторство и лицензию MIT. [LICENSE](LICENSE) · [NOTICE.md](NOTICE.md)
