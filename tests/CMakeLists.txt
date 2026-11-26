@@ -1,6 +1,13 @@
 add_executable(frame_inputs_test test_frame_inputs.cpp)
 target_compile_features(frame_inputs_test PRIVATE cxx_std_20)
 add_test(NAME frame_inputs_neutral COMMAND frame_inputs_test)
+find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME syncval_report_parser
+           COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_syncval_report.py)
+else()
+  message(STATUS "SyncVal report parser test skipped; Python 3 interpreter not found")
+endif()
 set(FRAMEINPUTS_VULKAN_INCLUDE "" CACHE PATH "Optional Vulkan SDK include directory for binding tests")
 if(NOT FRAMEINPUTS_VULKAN_INCLUDE)
   find_package(Vulkan QUIET)

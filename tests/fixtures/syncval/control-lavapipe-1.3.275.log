@@ -1,0 +1,39 @@
+SYNCVAL_CONTROL_LAYER name=VK_LAYER_KHRONOS_validation spec=1.3.275 implementation=1 extra_properties=0
+SYNCVAL_CONTROL_DEVICE index=0 name="llvmpipe (LLVM 20.1.2, 256 bits)" api=1.4.318 vendor=0x10005 device=0x0000 driver_id=13 driver="llvmpipe" driver_info="Mesa 25.2.8-0ubuntu0.24.04.5 (LLVM 20.1.2)" queue_family=0 synchronization2=1
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-transfer-write expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-transfer-write expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-clear-write expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-clear-write expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-all-commands expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-all-commands expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-no-dst-access expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x20000000002, name = framelab.syncval.control.image, type = VK_OBJECT_TYPE_IMAGE; | MessageID = 0x5c0ec5d6 | vkCmdClearColorImage():  Hazard WRITE_AFTER_WRITE for VkImage 0x20000000002[framelab.syncval.control.image], range index 0. Access info (usage: SYNC_CLEAR_TRANSFER_WRITE, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: 0, command: vkCmdPipelineBarrier, seq_no: 1, VkImage 0x20000000002[framelab.syncval.control.image], reset_no: 1).
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-no-dst-access expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-bottom-of-pipe expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x20000000002, name = framelab.syncval.control.image, type = VK_OBJECT_TYPE_IMAGE; | MessageID = 0x5c0ec5d6 | vkCmdClearColorImage():  Hazard WRITE_AFTER_WRITE for VkImage 0x20000000002[framelab.syncval.control.image], range index 0. Access info (usage: SYNC_CLEAR_TRANSFER_WRITE, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: 0, command: vkCmdPipelineBarrier, seq_no: 1, VkImage 0x20000000002[framelab.syncval.control.image], reset_no: 1).
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-bottom-of-pipe expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-compute-write expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x20000000002, name = framelab.syncval.control.image, type = VK_OBJECT_TYPE_IMAGE; | MessageID = 0x5c0ec5d6 | vkCmdClearColorImage():  Hazard WRITE_AFTER_WRITE for VkImage 0x20000000002[framelab.syncval.control.image], range index 0. Access info (usage: SYNC_CLEAR_TRANSFER_WRITE, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: SYNC_COMPUTE_SHADER_SHADER_STORAGE_WRITE, command: vkCmdPipelineBarrier, seq_no: 1, VkImage 0x20000000002[framelab.syncval.control.image], reset_no: 1).
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-compute-write expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-copy-stage expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x20000000002, name = framelab.syncval.control.image, type = VK_OBJECT_TYPE_IMAGE; | MessageID = 0x5c0ec5d6 | vkCmdClearColorImage():  Hazard WRITE_AFTER_WRITE for VkImage 0x20000000002[framelab.syncval.control.image], range index 0. Access info (usage: SYNC_CLEAR_TRANSFER_WRITE, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: SYNC_COPY_TRANSFER_WRITE, command: vkCmdPipelineBarrier2, seq_no: 1, VkImage 0x20000000002[framelab.syncval.control.image], reset_no: 1).
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-copy-stage expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/no-barrier expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x40000000004, name = framelab.syncval.control.buffer, type = VK_OBJECT_TYPE_BUFFER; | MessageID = 0x5c0ec5d6 | vkCmdFillBuffer():  Hazard WRITE_AFTER_WRITE for dstBuffer VkBuffer 0x40000000004[framelab.syncval.control.buffer]. Access info (usage: SYNC_COPY_TRANSFER_WRITE, prior_usage: SYNC_COPY_TRANSFER_WRITE, write_barriers: 0, command: vkCmdFillBuffer, seq_no: 1, reset_no: 1).
+SYNCVAL_CONTROL_END case=buffer-fill-fill/no-barrier expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/transfer-barrier expect=none timing=record
+SYNCVAL_CONTROL_END case=buffer-fill-fill/transfer-barrier expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/sync2-copy-stage expect=none timing=record
+SYNCVAL_CONTROL_END case=buffer-fill-fill/sync2-copy-stage expect=none messages=0 hazards=0 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/sync2-clear-stage expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x40000000004, name = framelab.syncval.control.buffer, type = VK_OBJECT_TYPE_BUFFER; | MessageID = 0x5c0ec5d6 | vkCmdFillBuffer():  Hazard WRITE_AFTER_WRITE for dstBuffer VkBuffer 0x40000000004[framelab.syncval.control.buffer]. Access info (usage: SYNC_COPY_TRANSFER_WRITE, prior_usage: SYNC_COPY_TRANSFER_WRITE, write_barriers: 0, command: vkCmdFillBuffer, seq_no: 1, reset_no: 1).
+SYNCVAL_CONTROL_END case=buffer-fill-fill/sync2-clear-stage expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=pass verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/queue-order-only expect=WRITE_AFTER_WRITE timing=submit
+SAMPLE_VALIDATION severity=4096 Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] Object 0: handle = 0x56114f516710, type = VK_OBJECT_TYPE_QUEUE; | MessageID = 0x5c0ec5d6 | vkQueueSubmit():  Hazard WRITE_AFTER_WRITE for entry 0, VkCommandBuffer 0x561151042cf0[], Submitted access info (submitted_usage: SYNC_COPY_TRANSFER_WRITE, command: vkCmdFillBuffer, seq_no: 1, reset_no: 1). Access info (prior_usage: SYNC_COPY_TRANSFER_WRITE, write_barriers: 0, queue: VkQueue 0x56114f516710[], submit: 5, batch: 0, batch_tag: 33, command: vkCmdFillBuffer, command_buffer: VkCommandBuffer 0x56114f522550[], seq_no: 1, reset_no: 1).
+SYNCVAL_CONTROL_END case=buffer-fill-submit/queue-order-only expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS properties=absent
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/host-fence-wait expect=none timing=submit
+SYNCVAL_CONTROL_END case=buffer-fill-submit/host-fence-wait expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/leading-barrier expect=none timing=submit
+SYNCVAL_CONTROL_END case=buffer-fill-submit/leading-barrier expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_SUMMARY cases=14 passed=14 failed=0 skipped=0 outside=0
+SAMPLE_VALIDATION_SUMMARY errors=7 warnings=0
