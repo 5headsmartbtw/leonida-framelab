@@ -150,6 +150,14 @@ In [Coordination #4](https://github.com/5headsmartbtw/leonida-framelab/issues/4)
 | `sample/`, `samples/d3d12_fg/`, `experiments/d3d12/` | Vulkan reference, installed D3D12 FG client and older standalone D3D12 experiments |
 | `native/windows/`, `docs/`, `LICENSES/` | Experimental Windows layer, implementation/evidence guides and upstream license texts |
 
+## Contributors
+
+| Contributor | Contributions |
+| --- | --- |
+| [@5headsmartbtw](https://github.com/5headsmartbtw) | Founder, maintainer, SDK architecture and development |
+| [@JoeY54](https://github.com/JoeY54) | D3D12 SR development, Vulkan SyncVal research and independent GPU validation |
+| [@akimfomin](https://github.com/akimfomin) | Independent Vulkan validation and PortBridge coordination |
+
 ## License and credits
 
 Original project contributions are **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. Retain the copyright and license notice. Imported [NVIDIA vk_streamline](https://github.com/nvpro-samples/vk_streamline) portions retain Apache-2.0. The [dlssg-open](https://github.com/dniminenn/dlssg-open)-derived port retains its original MIT attribution. [LICENSE](LICENSE) · [NOTICE.md](NOTICE.md)
