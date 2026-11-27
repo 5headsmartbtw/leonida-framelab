@@ -505,7 +505,7 @@ private:
     Scene scene_;
     std::vector<uint32_t> last_;
     bool cutVerified_ = false, fallbackVerified_ = false, recoveryVerified_ = false, cancelVerified_ = false,
-        retentionVerified_ = false, sharedVerified_ = false, reinitVerified_ = false;
+        retentionVerified_ = false, sharedVerified_ = false, twoHandlesVerified_ = false, reinitVerified_ = false;
     int dynamicResolution_ = -1; // -1 skipped, 1 verified
     unsigned resizes_ = 0;
 
@@ -855,7 +855,8 @@ private:
             "{\n  \"mode\": \"%s\",\n  \"result\": \"%s\",\n  \"evaluations\": %u,\n  \"verified\": %u,\n"
             "  \"contract_checks\": %u,\n  \"resizes\": %u,\n  \"camera_cut_verified\": %s,\n"
             "  \"fallback_verified\": %s,\n  \"recovery_verified\": %s,\n  \"cancel_verified\": %s,\n"
-            "  \"retention_verified\": %s,\n  \"shared_session_verified\": %s,\n  \"reinit_verified\": %s,\n"
+            "  \"retention_verified\": %s,\n  \"shared_session_verified\": %s,\n  \"two_handles_verified\": %s,\n"
+            "  \"reinit_verified\": %s,\n"
             "  \"dynamic_resolution\": \"%s\",\n  \"leases_created\": %u,\n  \"lease_releases\": %u,\n"
             "  \"validation\": {\"debug_layer\": %s, \"gpu_based\": %s, \"errors\": %u, \"warnings\": %u},\n"
             "  \"memory_bytes\": {\"peak_local\": %llu, \"budget\": %llu},\n"
@@ -863,7 +864,7 @@ private:
             mode, success ? "pass" : "fail", evaluations_, verified_, contractChecks, resizes_,
             cutVerified_ ? "true" : "false", fallbackVerified_ ? "true" : "false", recoveryVerified_ ? "true" : "false",
             cancelVerified_ ? "true" : "false", retentionVerified_ ? "true" : "false",
-            sharedVerified_ ? "true" : "false", reinitVerified_ ? "true" : "false",
+            sharedVerified_ ? "true" : "false", twoHandlesVerified_ ? "true" : "false", reinitVerified_ ? "true" : "false",
             dynamicResolution_ < 0 ? "skipped" : dynamicResolution_ ? "verified" : "failed", created_, releases_,
             args_.validation ? "true" : "false", args_.gpuValidation ? "true" : "false", gpu_.validation.errors,
             gpu_.validation.warnings, static_cast<unsigned long long>(gpu_.peakLocal),
@@ -891,6 +892,28 @@ private:
         std::puts("ABI_CHECK d3d12_fg_while_sr_session_live=SKIPPED reason=D3D12FG_not_installed");
 #endif
         sharedVerified_ = true;
+    }
+
+    // Two fully configured handles share one NGX session, each with its own feature and history.
+    // A keeps its history across B's frame, and destroying B must not shut NGX down under A.
+    void twoHandles(FrameLabD3D12Sr* a)
+    {
+        auto b = create(args_.output / L"ngx");
+        const auto stage = stage_;
+        configure(b.get(), stage.output, stage.mode, false, false);
+        // B renders the scene that A renders next, so A's motion history stays consistent.
+        const auto savedScene = scene_;
+        const auto savedIndex = index_;
+        index_ = 0;
+        bool ok = evaluate(b.get(), FRAMELAB_RESET_INITIAL, -1).ok;
+        scene_ = savedScene;
+        index_ = savedIndex;
+        ok &= evaluate(a, 0, -1).ok;  // A continues its history: no reset bits, consecutive index
+        expectStatus(framelab_d3d12_sr_destroy(b.release()), FRAMELAB_OK, "destroy_second_configured_handle");
+        ok &= evaluate(a, 0, -1).ok;  // the session is still live for A
+        twoHandlesVerified_ = ok;
+        std::printf("SDK_SR_TWO_HANDLES output=%ux%u mode=%u verified=%d\n", stage.output.width, stage.output.height,
+                    stage.mode, int(ok));
     }
 };
 
@@ -969,6 +992,7 @@ int Run::correctness()
     }
     evaluate(raw, 0, -1, true);
     evaluate(raw, 0, -1);
+    twoHandles(raw);
     cancelUnsubmitted(raw);
     evaluate(raw, 0, -1);
     // Camera cut: new palette and object position, explicit reset.
@@ -1009,7 +1033,8 @@ int Run::correctness()
     gpu_.validation.drain();
     const bool leasesBalanced = releases_ == created_;
     const bool success = verified_ == evaluations_ && cutVerified_ && fallbackVerified_ && recoveryVerified_ &&
-        cancelVerified_ && retentionVerified_ && sharedVerified_ && reinitVerified_ && dynamicResolution_ != 0 &&
+        cancelVerified_ && retentionVerified_ && sharedVerified_ && twoHandlesVerified_ && reinitVerified_ &&
+        dynamicResolution_ != 0 &&
         resizes_ == 2 && leasesBalanced && gpu_.validation.errors == 0 && gpu_.validation.warnings == 0;
     std::printf("SDK_SR_MEMORY peak_local_mb=%.1f budget_mb=%.1f\n", gpu_.peakLocal / 1048576.0, gpu_.budget / 1048576.0);
     std::printf("SDK_SR_VALIDATION debug_layer=%d gpu_based=%d errors=%u warnings=%u\n", int(args_.validation),
