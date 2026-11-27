@@ -6,3 +6,19 @@ rust-version = "1.77"
 license = "MIT"
 links = "FrameLab"
 publish = false
+
+# Every feature is additive. Any combination builds; see README.md for the matrix.
+[features]
+default = ["link"]
+# Link the shared FrameLab library at build time and declare its exports as extern functions.
+link = []
+# Load FrameLab from an explicit path at run time. Without `link`, nothing imports FrameLab.
+runtime = []
+# Raw bindings for <framelab/d3d12_sr.h>. Windows x86_64 only; other targets compile without them.
+d3d12-sr = []
+# Raw bindings for <framelab/d3d12_fg.h>. Windows x86_64 only; other targets compile without them.
+d3d12-fg = []
+
+[[example]]
+name = "runtime_probe"
+required-features = ["runtime"]

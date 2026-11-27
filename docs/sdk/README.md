@@ -2,7 +2,7 @@
 
 FrameLab provides a C++20 library and a C ABI for validating temporal frame metadata and tracking resource ownership across a frame submission. This experimental package contains the FG input contract and lifecycle. The opt-in Windows x64 components on main are [D3D12FG](D3D12_FG.md) for Direct NGX FG, [D3D12SR](D3D12_SR.md) for Direct NGX DLSS SR and [VulkanSR](VULKAN_SR.md) for Streamline SR. The legacy Vulkan sample also exercises FG. Installed Vulkan FG and combined SR → FG are verified in open drafts [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20) and [#23](https://github.com/5headsmartbtw/leonida-framelab/pull/23), with extended SyncVal tracked in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24).
 
-The [v0.4.0 release notes](RELEASE_NOTES.md) list the verification matrix and experimental limits. The raw Rust package targets ABI v1 of the portable core.
+The [v0.4.0 release notes](RELEASE_NOTES.md) list the verification matrix and experimental limits. The raw Rust package targets ABI v1 of the portable core and, with opt-in features, the Windows x64 D3D12 SR and FG components.
 
 ## Install and link
 

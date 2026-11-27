@@ -1,13 +1,29 @@
 //! Raw FrameLab ABI v1 bindings. The caller owns GPU submission and completion.
 //! See the C header and SDK guide before constructing pointers or retiring a frame.
+//!
+//! Features (all additive):
+//! - `link` (default): link the shared FrameLab library and declare its exports.
+//! - `runtime`: load FrameLab from an explicit path with [`runtime::Library`].
+//! - `d3d12-sr`, `d3d12-fg`: raw bindings for the optional Windows x86_64 D3D12 components.
 
 use core::ffi::{c_char, c_void};
 
 pub type FrameLabStatus = u32;
 pub type FrameLabReleaseFn = Option<unsafe extern "C" fn(*mut c_void)>;
 
+#[macro_use]
+mod macros;
 mod constants;
 pub use constants::*;
+
+#[cfg(all(windows, target_arch = "x86_64", any(feature = "d3d12-sr", feature = "d3d12-fg")))]
+pub mod d3d12;
+#[cfg(all(windows, target_arch = "x86_64", feature = "d3d12-fg"))]
+pub mod d3d12_fg;
+#[cfg(all(windows, target_arch = "x86_64", feature = "d3d12-sr"))]
+pub mod d3d12_sr;
+#[cfg(feature = "runtime")]
+pub mod runtime;
 
 #[repr(C)]
 pub struct FrameLabLease {
@@ -95,26 +111,28 @@ pub struct FrameLabFgFrame {
     pub flags: u32,
 }
 
-extern "C" {
-    pub fn framelab_abi_version() -> u32;
-    pub fn framelab_status_string(status: FrameLabStatus) -> *const c_char;
-    pub fn framelab_lease_create(
+framelab_exports! {
+    /// The portable core exports of <framelab/framelab.h>, resolved at run time.
+    table CoreApi;
+    fn framelab_abi_version() -> u32;
+    fn framelab_status_string(status: FrameLabStatus) -> *const c_char;
+    fn framelab_lease_create(
         user: *mut c_void,
         release: FrameLabReleaseFn,
         out_lease: *mut *mut FrameLabLease,
     ) -> FrameLabStatus;
-    pub fn framelab_lease_destroy(lease: *mut FrameLabLease);
-    pub fn framelab_fg_stream_create(
+    fn framelab_lease_destroy(lease: *mut FrameLabLease) -> ();
+    fn framelab_fg_stream_create(
         abi_version: u32,
         out_stream: *mut *mut FrameLabFgStream,
     ) -> FrameLabStatus;
-    pub fn framelab_fg_stream_destroy(stream: *mut FrameLabFgStream) -> FrameLabStatus;
-    pub fn framelab_fg_prepare(
+    fn framelab_fg_stream_destroy(stream: *mut FrameLabFgStream) -> FrameLabStatus;
+    fn framelab_fg_prepare(
         stream: *mut FrameLabFgStream,
         frame: *const FrameLabFgFrame,
     ) -> FrameLabStatus;
-    pub fn framelab_fg_mark_submitted(stream: *mut FrameLabFgStream) -> FrameLabStatus;
-    pub fn framelab_fg_cancel(stream: *mut FrameLabFgStream) -> FrameLabStatus;
-    pub fn framelab_fg_retire(stream: *mut FrameLabFgStream) -> FrameLabStatus;
-    pub fn framelab_fg_invalidate(stream: *mut FrameLabFgStream) -> FrameLabStatus;
+    fn framelab_fg_mark_submitted(stream: *mut FrameLabFgStream) -> FrameLabStatus;
+    fn framelab_fg_cancel(stream: *mut FrameLabFgStream) -> FrameLabStatus;
+    fn framelab_fg_retire(stream: *mut FrameLabFgStream) -> FrameLabStatus;
+    fn framelab_fg_invalidate(stream: *mut FrameLabFgStream) -> FrameLabStatus;
 }

@@ -29,14 +29,39 @@ jobs:
         run: |
           $install = (Resolve-Path install-sdk).Path
           $env:FRAMELAB_LIB_DIR = Join-Path $install lib
+          $env:FRAMELAB_LOADER_FIXTURES = Join-Path (Resolve-Path consumer).Path loader-fixtures
+          $manifest = 'bindings/rust/Cargo.toml'
+          if ($IsWindows) {
+            $env:FRAMELAB_LIBRARY = Join-Path $install bin/FrameLab.dll
+            $layout = './consumer/Release/abi_layout.exe'
+            $env:FRAMELAB_D3D12_ABI_LAYOUT = "$(& ./consumer/Release/d3d12_abi_layout.exe)"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } else {
+            $env:FRAMELAB_LIBRARY = Join-Path $env:FRAMELAB_LIB_DIR libFrameLab.so
+            $layout = './consumer/abi_layout'
+          }
+          # Runtime-only host: it must start while FrameLab is not on the loader path, then load it by path.
+          foreach ($argument in @($null, (Join-Path $install missing/FrameLab.dll), $env:FRAMELAB_LIBRARY)) {
+            $probe = if ($argument) { @('--', $argument) } else { @() }
+            cargo run --offline --manifest-path $manifest --no-default-features --features runtime --example runtime_probe @probe
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           if ($IsWindows) {
             $env:PATH = (Join-Path $install bin) + [IO.Path]::PathSeparator + $env:PATH
-            $layout = './consumer/Release/abi_layout.exe'
           } else {
             $env:LD_LIBRARY_PATH = $env:FRAMELAB_LIB_DIR
-            $layout = './consumer/abi_layout'
           }
           $env:FRAMELAB_ABI_LAYOUT = & $layout
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --offline --manifest-path bindings/rust/Cargo.toml
-          exit $LASTEXITCODE
+          # Core-only, linked plus runtime, and runtime-only builds; the D3D12 components on Windows x64.
+          $matrix = @('', '--features runtime', '--no-default-features --features runtime')
+          if ($IsWindows) {
+            $matrix += @('--features d3d12-sr', '--features d3d12-fg', '--features d3d12-sr,d3d12-fg',
+              '--all-features', '--no-default-features --features runtime,d3d12-sr',
+              '--no-default-features --features runtime,d3d12-fg')
+          }
+          foreach ($features in $matrix) {
+            Write-Host "cargo test $features"
+            cargo test --offline --manifest-path $manifest @($features -split ' ' | Where-Object { $_ })
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
