@@ -2,7 +2,7 @@
 
 The optional `D3D12SR` component exposes native DLSS Super Resolution through a versioned C ABI on Windows x64. It calls Direct NGX from the separately acquired [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS). It is off by default. The application owns the device, queue, command lists, allocators, completion fence, resources and presentation. An external project builds against the installed FrameLab package and the public Windows SDK. It needs no NVIDIA headers or libraries.
 
-Status: native evaluation, verified readback, D3D12 debug-layer and GPU-based validation, timing and native device removal passed on an RTX 5090 with the official DLSS 310.9.1 runtime. The RTX 2050 low-memory merge gate is pending. See [Verification](#verification).
+Status: native evaluation, verified readback, D3D12 debug-layer and GPU-based validation, timing and native device removal passed on an RTX 5090 with the official DLSS 310.9.1 runtime. The maintainer's RTX 2050 (4 GB) low-memory merge gate also passed. See [Verification](#verification).
 
 ## Build and link
 
@@ -110,7 +110,7 @@ FrameLab makes no GPU allocations or copies. NGX owns the feature's internal res
 
 Portable checks run in CI on Linux and Windows without NVIDIA downloads. `d3d12_sr_contract` exercises the decision layer in [sr_contract.hpp](../../src/backends/d3d12/sr_contract.hpp): option and range checks, every descriptor rejection, reset rules, monotonic fences, `NOT_READY` retention, cancellation, reconfiguration and simulated device removal. On Windows, `d3d12_sr_header_c` and `d3d12_sr_header_cpp` compile the public header as C and C++ with the D3D12 FG header and check the x64 layout. The native adapter `static_assert`s every numeric constant the decision layer uses against the Windows SDK, NGX and public headers. The native module needs the DLSS SDK and is not built in hosted CI.
 
-The [external consumer](../../samples/d3d12_sr) and [`tests/run_d3d12_sr_checks.ps1`](../../tests/run_d3d12_sr_checks.ps1) run the hardware checks in separate processes. Covered are standard and D3D12 debug-layer correctness runs, GPU-based validation, timing without validation or readback, and native device removal. The checks include verified readback of a known synthetic scene that detects clear-only and stale output, three output configurations with two resizes, a camera cut, missing-input rejection with fallback and recovery, dynamic resolution where the runtime reports a range, cancellation, fence-gated retention, a joined session handle, rejection of FG while SR is alive and NGX re-initialization.
+The [external consumer](../../samples/d3d12_sr) and [`tests/run_d3d12_sr_checks.ps1`](../../tests/run_d3d12_sr_checks.ps1) run the hardware checks in separate processes. Covered are standard and D3D12 debug-layer correctness runs, GPU-based validation, timing without validation or readback, and native device removal. The checks include verified readback of a known synthetic scene that detects clear-only and stale output, three output configurations with two resizes, a camera cut, missing-input rejection with fallback and recovery, dynamic resolution where the runtime reports a range, cancellation, fence-gated retention, a joined session handle, two fully configured handles on one session, rejection of FG while SR is alive and NGX re-initialization.
 
 ### RTX 5090 with the official runtime
 
@@ -132,11 +132,13 @@ The branch was re-attributed to the owner on 2026-11-27 without changing any tre
 
 On 2026-11-27 the branch head `2ce20fa`, whose code is identical to `bfcbbb9`, was rerun on the same RTX 5090 with the same runtime and toolchain. The SDK CTest passed 5 of 5 tests. The SR and FG client CTests each passed 1 of 1. All three builds had 0 warnings. The runner passed all five cases under both Windows PowerShell 5.1 and PowerShell 7, and the debug-layer and GPU-based validation runs reported 0 errors and 0 warnings. The saved readback SHA-256 matched the earlier run. GPU time at p50 was 0.205 ms, and peak local VRAM was 279, 280 and 302 MB, the same as before. The D3D12 FG consumer exited with 0 and verified 5 interpolations, and its readback hash matched the earlier run.
 
+The same day, `5a18554` was rerun on the same machine. It merges upstream main (#37–#40) and adds the two-handle session test. The SDK CTest passed 6 of 6, including the SyncVal report parser test, and the SR and FG client CTests each passed 1 of 1. The runner passed all five cases under both PowerShell versions. Each correctness run verified 23 of 23 evaluations and passed 38 lifecycle checks. Two fully configured handles shared one NGX session: the first handle kept its history across a frame on the second, and it kept working after the second was destroyed. The debug layer and GPU-based validation reported 0 errors and 0 warnings. With the second configured handle, peak local VRAM was 307, 308 and 330 MB. The readback and FG hashes matched the earlier runs.
+
 On the same install and machine, the existing [D3D12 FG consumer](../../samples/d3d12_fg) exited with 0. It completed six submissions with five verified interpolations and three final lease releases. Its readback hash differs from the RTX 2050 reference, which used a different runtime profile.
 
-| Remaining hardware run | Status |
+| Other hardware run | Status |
 | --- | --- |
-| RTX 2050 Laptop (4 GB) merge gate | Pending maintainer comparison per the [release checklist](RELEASE_CHECKLIST.md#rtx-2050-low-memory-merge-gate). |
+| RTX 2050 Laptop (4 GB) merge gate | Passed. The maintainer tested `cc77061` (tree of `b0bf7c3`) with driver 617.14, MSVC 19.44 and the official 310.9.1 runtime. Results: 20/20 SR evaluations, 37/37 lifecycle checks, debug layer and GPU-based validation 0/0, SR GPU p50 1.490 ms and p95 1.588 ms, steady VRAM 92.5 MiB against a 3,368 MiB budget, and D3D12 FG readbacks unchanged with no FG regression ([#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36#issuecomment-7197345649)). This run predates the registry change and the upstream merge. |
 | RTX 2080 Ti, RTX 5060 Laptop | Optional follow-up. |
 
 Not covered by the sample: sub-pixel jitter, HDR and exposure, depth-stencil formats, presentation, allocation failure injection, concurrent SR and FG, and image quality.
