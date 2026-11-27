@@ -37,7 +37,7 @@ foreach ($render in $RenderExtents) {
     if (-not $run.WaitForExit(600000)) { $run.Kill(); $run.WaitForExit(); throw "Timeout: $name" }
     $run.WaitForExit()
     if ($null -eq $run.ExitCode) { throw "Exit code unavailable: $name" }
-    $text = Get-Content -LiteralPath $stdout -Raw
+    $text = [string](Get-Content -LiteralPath $stdout -Raw)
     $missing = @($checks | Where-Object { $text -notmatch [regex]::Escape("ABI_CHECK $_") })
     $summary = [regex]::Match($text, 'SDK_FG_SUMMARY real_frames=(\d+) verified=(\d+) final_lease_releases=(\d+) max_edge_error=(-?\d+)')
     $recreated = [regex]::Match($text, 'SDK_FG_RECREATED render=(\S+) real_frames=(\d+) verified=(\d+) final_lease_releases=(\d+) max_edge_error=(-?\d+)')
