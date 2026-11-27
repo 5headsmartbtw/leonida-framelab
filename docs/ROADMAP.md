@@ -2,6 +2,10 @@
 
 Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/issues/4) to claim tasks and post progress. See the [contribution rules](../CONTRIBUTING.md) before submitting changes.
 
+## Independent Vulkan handoff coverage
+
+QA-02 reproduced all four standalone Vulkan queue-handoff cases on the Radeon 860M and the Ryzen 9 9950X3D integrated GPU. Both AMD reports verified exact 64-pixel readback, consumer fence completion and zero diagnostics with synchronization validation enabled. The AMD results extend the standalone RTX 2050 and independent RTX 4070 Ti SUPER evidence. [Device results and original reports](evidence/independent-vulkan-handoff.md#cross-vendor-validation)
+
 ## SDK track
 
 | Workstream | Priority | Implementation boundary |
@@ -10,6 +14,7 @@ Use the [coordination issue](https://github.com/5headsmartbtw/leonida-framelab/i
 | SDK-02 | P0 | Static/shared CMake package and installed C/C++ consumers pass on Windows and Linux. |
 | SR-01 | P0 | The installed [Vulkan SR component](sdk/VULKAN_SR.md) passed the 120-evaluation RTX 2050 profile, readback, resize and history reset. Independent official-runtime validation is tracked in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
 | D3D-01 | P0 | The installed [public D3D12 FG component](sdk/D3D12_FG.md) passed the external consumer, real fence/lifetime checks and matched the old readback. |
+| FL-14 | P0 | The opt-in [D3D12 SR component](sdk/D3D12_SR.md) and its external C/C++ consumer passed native readback, D3D12 debug-layer and GPU-based validation, timing and device removal on an RTX 5090 with the official runtime, and passed the maintainer's RTX 2050 (4 GB) merge gate. [Issue #29](https://github.com/5headsmartbtw/leonida-framelab/issues/29) |
 | VK-01 | P1 | The [standalone image handoff](../tests/vulkan-handoff/README.md) verified binary and timeline waits on distinct queues. Installed FG and the combined sample cover both topologies in [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20) and [#27](https://github.com/5headsmartbtw/leonida-framelab/pull/27). Follow [#26](https://github.com/5headsmartbtw/leonida-framelab/pull/26) for loss and cancellation coverage. [Issue #2](https://github.com/5headsmartbtw/leonida-framelab/issues/2) |
 | FFI-01 | P1 | [Raw Rust FFI](../bindings/rust/README.md) passes C layout and shared-library lifecycle tests on Windows and Linux. |
 | INT-01 / INT-02 | P1 | Read-only [Leonida](integrations/leonida/README.md) and [VIctory](integrations/victory/README.md) audits identify consumer seams and missing evidence. |
@@ -44,6 +49,6 @@ Tracking issues: [runtime paths](https://github.com/5headsmartbtw/leonida-framel
 
 ## Next SDK development stage
 
-1. **D3D12 Super Resolution.** Deliver an optional installed C ABI component. Specify the input and output extents, resource states, queue/device identity, fence completion and lease lifetime. Verify real output from an external C/C++ consumer, resizing, history reset and ordinary-render fallback on the reference GPU.
-2. **D3D12 SR → FG.** Use the real SR output as FG color. Pin its lifetime through FG completion. Validate depth and motion-vector scaling, camera/jitter conventions, command-list ordering, fences, resize and fallback. Keep each component independently usable.
+1. **D3D12 Frame Generation presentation.** [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) verifies DXGI presentation from the installed FG client, including VSync, resize, fallback and fence retirement. JoeY54 owns this task.
+2. **D3D12 SR → FG.** [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) follows FL-14 and FL-15. Use the real SR output as FG color. Pin its lifetime through FG completion. Validate depth and motion-vector scaling, camera/jitter conventions, command-list ordering, fences, resize and fallback. Keep each component independently usable.
 3. **FidelityFX Cauldron consumer.** Use the [AMD FidelityFX SDK v1 Cauldron framework](https://gpuopen.com/fidelityfx-cauldron-framework/) as an independent D3D12 host. Add an optional render module after scene motion/depth production and before presentation, using the host's resources and completion fences. Pin and review the chosen upstream revision and licenses before adding dependencies. Keep Cauldron and NVIDIA runtime downloads outside the portable FrameLab build.

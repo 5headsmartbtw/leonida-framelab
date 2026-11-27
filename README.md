@@ -1,92 +1,167 @@
 <p align="center"><img src="docs/assets/leonida-framelab-logo.png" width="100%" alt="Leonida FrameLab" /></p>
-<p align="center"><strong>FrameLab SDK core for temporal frame inputs, with NVIDIA DLSS validation samples.</strong></p>
-<p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Build</a> · <a href="docs/phase3/VALIDATION.en.md">Evidence</a> · <a href="docs/ROADMAP.md">Roadmap</a></p>
+<p align="center"><strong>An independent experimental rendering SDK for temporal frame processing and reproducible graphics validation.</strong></p>
+<p align="center"><a href="README.md">English</a> · <a href="README_RU.md">Русский</a> · <a href="docs/BUILD.md">Build</a> · <a href="docs/evidence/independent-vulkan-handoff.md">Evidence</a> · <a href="docs/ROADMAP.md">Roadmap</a></p>
 <p align="center"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-67d8bc" /> <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-79a6ff" /> <img alt="Experimental research" src="https://img.shields.io/badge/Status-experimental-e5bd69" /> <a href="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml"><img alt="Contract tests" src="https://github.com/5headsmartbtw/leonida-framelab/actions/workflows/contract-tests.yml/badge.svg" /></a></p>
 
-Want to help? See the [contribution rules](CONTRIBUTING.md) and [claim a task in Issues](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
+FrameLab provides an installable C ABI for temporal frame metadata, GPU resource lifetime and NVIDIA DLSS integration. External renderers can link from C or C++ using public C headers or the raw Rust bindings. Original synthetic workloads exercise native Super Resolution (SR), Frame Generation (FG), image readback and fallback on specific tested profiles.
 
-## FrameLab SDK
+The project grew out of research for [Leonida](docs/integrations/leonida/README.md). FrameLab builds and tests independently of downstream renderers. Integration with a GTA VI renderer remains research, and the SDK does not install game mods or establish game compatibility.
 
-The SDK core installs a C ABI for FG input validation, frame sequencing and resource leases. Build it as a static or shared library and link from an external C/C++ project with `FrameLab::FrameLab`. The public header and default build use no game or GPU SDK headers. See [SDK setup and lifecycle](docs/sdk/README.md) and the [experimental release checklist](docs/sdk/RELEASE_CHECKLIST.md).
+## SDK and backend status
 
-The optional [D3D12 FG component](docs/sdk/D3D12_FG.md) records real NGX work from an external app and retains resources through its completion fence. Native Vulkan FG and Streamline SR are still exercised separately in the reference sample.
+| Capability | Status | Evidence and boundary |
+| --- | --- | --- |
+| Portable FrameInputs C ABI | Merged | Versioned metadata, frame sequencing and resource leases. [#7](https://github.com/5headsmartbtw/leonida-framelab/pull/7) |
+| SDK install and C/C++ consumers | Merged | Static/shared CMake packages and external consumers on Windows and Linux. [#7](https://github.com/5headsmartbtw/leonida-framelab/pull/7) |
+| Rust FFI | Merged | Raw bindings with C layout and installed shared-library lifecycle checks. [#11](https://github.com/5headsmartbtw/leonida-framelab/pull/11) |
+| D3D12 FG | Merged | Optional Windows x64 component. Native Direct NGX, verified readback and fence retirement. [#19](https://github.com/5headsmartbtw/leonida-framelab/pull/19) |
+| D3D12 SR | Planned | Optional installed component. [FL-14](https://github.com/5headsmartbtw/leonida-framelab/issues/29) |
+| D3D12 generated-frame DXGI presentation | Planned for installed client | The [older standalone presenter](experiments/d3d12/README.md) verified real and generated Present. The installed client verified readback. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
+| D3D12 SR + FG | Planned | Depends on FL-14 and the presentation work in FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) |
+| Vulkan FG | Experimental · open draft | Legacy sample in main. Installed Direct NGX and readback verified in [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). Release blocked by [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
+| Vulkan SR | Merged | Optional Windows x64 Streamline component. Verified readback, resize/reset and timeline retirement. [#22](https://github.com/5headsmartbtw/leonida-framelab/pull/22) |
+| Vulkan SR + FG | Experimental · open draft | Native SR output feeds FG on one command stream. Reference readback, resize and fallback verified. [#23](https://github.com/5headsmartbtw/leonida-framelab/pull/23) |
+| Vulkan queue handoff | Merged fixture · experimental SDK paths | Standalone binary/timeline waits and family ownership in [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12). Installed FG and combined paths in [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20) and [#27](https://github.com/5headsmartbtw/leonida-framelab/pull/27). |
+| Vulkan failure recovery | Experimental · open draft | Injected rejection, simulated loss, lease retention and fresh-process recovery. Native driver loss and same-process recovery remain unverified. [#26](https://github.com/5headsmartbtw/leonida-framelab/pull/26) |
+| External renderer integration | In development | Installed SDK linkage is in main. Cauldron has a local checkpoint. Leonida and VIctory have [read-only audits](https://github.com/5headsmartbtw/leonida-framelab/pull/10). |
 
-## What is the testbed?
+## Architecture
 
-**Leonida FrameLab** is an experimental research and validation project for **NVIDIA DLSS Frame Generation and Super Resolution**, intended to prepare a careful future integration with [Leonida](https://github.com/ItsNotRexed/Leonida).
+```mermaid
+flowchart TD
+    A["Application or renderer"] --> B["FrameInputs and resource metadata"]
+    B --> C{"Validate inputs and query capabilities"}
+    C -->|Supported profile| D["D3D12 or Vulkan component"]
+    D --> E["Native SR or FG evaluation"]
+    E --> F["GPU completion and resource retirement"]
+    F --> G["Application-owned presentation"]
+    C -->|Rejected or unsupported| R["Ordinary rendering"]
+    R --> G
+    P["Planned: D3D12 SR and SR + FG"] -.-> D
+    X["Experimental: installed Vulkan FG and SR + FG"] -.-> D
+```
 
-The repository brings together a working Windows Vulkan/D3D12 FG testbed, an API-neutral **FrameInputs** contract, CPU/GPU validation evidence and a read-only audit of Leonida's presentation pipeline. It focuses on proving that frames are actually computed, checking the image and handling resource lifetime correctly.
+The portable layer checks same-frame color, depth, motion vectors, camera/jitter, extents and temporal continuity. Backends validate native bindings and capabilities and record GPU work. The host owns submission and presentation. Resource leases survive until the applicable native fence or timeline completes. The diagram shows both supported and prospective paths. Each component's contract defines its inputs, completion primitive and fallback behavior. [Architecture](docs/ARCHITECTURE.md) · [C ABI and lifecycle](docs/sdk/README.md)
 
-**It is not a finished FG/SR backend for Leonida or a game mod installer.** Leonida's backend has not been modified. Real game depth, motion vectors and camera bindings have not been identified. Unavailable inputs are rejected; they are never invented to make a capability check pass.
+## Hardware evidence
 
-## Current status
+| Device | Verified workload | Evidence |
+| --- | --- | --- |
+| RTX 2050 Laptop (4 GB) | Low-memory reference. Installed D3D12 FG readback and Vulkan SR. Standalone Vulkan handoff and additional Vulkan validation in open PRs. RTX 2050 FG used an experimental compatibility profile. | [D3D12 FG](docs/sdk/D3D12_FG.md) · [Vulkan SR](docs/sdk/VULKAN_SR.md) · [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12) · [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) |
+| RTX 4070 Ti SUPER | Standalone Vulkan handoff, all four scenarios. | [akimfomin's report](https://github.com/5headsmartbtw/leonida-framelab/pull/12#issuecomment-7142089405) |
+| RTX 5090 | Native Vulkan FG and generated-image readback from draft #20 with an official, unmodified NVIDIA runtime. SyncVal reproduced write-after-write diagnostics. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121) |
+| Radeon 860M | Standalone Vulkan handoff, all four scenarios. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7147944059) |
+| Ryzen 9 9950X3D integrated Radeon graphics | Standalone Vulkan handoff, all four scenarios. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7153817545) |
 
-| Area | Verified result | Boundary |
-|---|---|---|
-| Direct NGX FG / D3D12 | Feature creation, Evaluate, readback and real/generated Present on RTX 2050 | Independent synthetic baseline |
-| Direct NGX FG / native Windows Vulkan | Working 2X in the sample's own animated 3D scene | External SM86 dependency + experimental Vulkan layer |
-| DLSS Super Resolution / Streamline | 120 successful Evaluate calls, Vulkan validation 0/0 on RTX 2050 | Combined SR + FG is unverified |
-| FrameInputs Phase 3 | 59 checks, baseline-identical control image, tested missing-depth fallback | Current GPU consumer is Vulkan-only, one command stream |
-| VSync / resize / FG toggle | Live Immediate↔FIFO, resize to 1920×1009, disable/re-enable; validation 0/0 | API Present counts are not physical scanout or latency |
-| Leonida integration | Pipeline audited, concrete integration plan written | Required game semantics and completion/lifetime seam still missing |
+Standalone handoff validates binary/timeline waits, queue-family ownership and exact readback. DLSS support is evaluated separately. The experimental RTX 2050 FG result does not establish official NVIDIA FG support on RTX 20- or 30-series GPUs. [Independent handoff evidence](docs/evidence/independent-vulkan-handoff.md) · [Accepted AMD review](https://github.com/5headsmartbtw/leonida-framelab/pull/33)
 
-Published hardware evidence comes from a single **RTX 2050 Laptop, SM 8.6, 4 GB** with Windows 11 and NVIDIA 617.14. Independent replication is open. See [validation](docs/phase3/VALIDATION.en.md) and the [coordination thread](https://github.com/5headsmartbtw/leonida-framelab/issues/4).
+## Synthetic performance and stability
 
-## Why FrameInputs matters
+[Open telemetry PR #25](https://github.com/5headsmartbtw/leonida-framelab/pull/25) measured a synthetic Vulkan scene on the RTX 2050 Laptop, Windows 11 build 26200, NVIDIA driver 617.14, Vulkan SDK 1.4.363.1 and Streamline 2.14.1. FG used the reference experimental Windows layer and external SM86 0.4.2 / bundled 310.9.16 runtime. The [fixed-display benchmark](https://github.com/5headsmartbtw/leonida-framelab/blob/f78bab5dfa835132b84e2dc59c162e5b733cedb2/docs/sdk/VULKAN_TELEMETRY.md#fixed-display-benchmark) used [`400d7c7`](https://github.com/5headsmartbtw/leonida-framelab/commit/400d7c73c2fcca7b105fcfc8c7a156ce6f378021), **1280×720 output at 75 Hz**, and 180 source frames per profile with the first 30 excluded. Timing runs disabled validation and diagnostic readback. [Reference runtime evidence](https://github.com/5headsmartbtw/leonida-framelab/issues/24)
 
-A back buffer alone is not enough for reliable temporal frame generation. The consumer needs the correct color, depth, motion vectors, camera/jitter, dimensions and frame history **for the same source frame**. It also needs to know when the GPU may read them and who keeps their allocations alive.
+| Profile | VSync / present mode | Render size | Source FPS | Mean / P99 interval (ms) | GPU (ms) | Working set (MiB) | Device-local VRAM (MiB) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Native | Off / Immediate | 1280×720 | 179.90 | 5.56 / 6.14 | 0.11 | 403.9–404.0 | 99.9–99.9 |
+| Native | On / FIFO | 1280×720 | 74.97 | 13.34 / 14.05 | 0.12 | 371.3–371.4 | 96.1–96.1 |
+| SR | Off / Immediate | 640×360 | 177.42 | 5.64 / 6.96 | 2.68 | 384.6–384.7 | 189.1–189.1 |
+| SR | On / FIFO | 640×360 | 74.93 | 13.35 / 14.27 | 3.18 | 381.5–381.6 | 185.3–185.3 |
+| FG | Off / Immediate | 1280×720 | 144.08 | 6.94 / 8.09 | 5.03 | 417.0–417.0 | 246.8–246.8 |
+| FG | On / FIFO | 1280×720 | 37.49 | 26.68 / 27.71 | 6.94 | 414.3–414.6 | 243.1–243.1 |
+| SR + FG | Off / Immediate | 640×360 | 99.28 | 10.07 / 11.41 | 7.93 | 427.4–427.4 | 322.5–322.5 |
+| SR + FG | On / FIFO | 640×360 | 37.48 | 26.68 / 27.65 | 8.63 | 422.7–422.8 | 318.7–318.7 |
 
-`fg/FrameInputs.hpp` contains the API-neutral contract. `fg/FrameInputsVulkan.hpp` resolves it to typed Vulkan bindings. Invalid metadata falls back to the normal real-frame Present **before NGX or new image barriers are recorded**, and the next valid frame resets history. The sample retains actual GBuffer/allocator owners until GPU completion.
+GPU time sums the recorded Vulkan work. The working set is Windows RSS and VRAM is sampled device-local heap usage from Vulkan's memory-budget extension. These source-frame rates describe this workload. Present counters in the detailed evidence are API calls. Physical scanout and input latency were unmeasured, and the benchmark does not predict GTA VI or other game performance.
 
-See [contract](docs/phase3/CONTRACT.en.md) and [architecture](docs/ARCHITECTURE.md).
+The [separate stability runs](https://github.com/5headsmartbtw/leonida-framelab/blob/f78bab5dfa835132b84e2dc59c162e5b733cedb2/docs/sdk/VULKAN_TELEMETRY.md#stepped-stability-runs) completed **120, 500, 1,000 and 10,000 source frames** per SR, FG and combined profile. They used the same reference GPU and runtime, with VSync off, standard validation and three alternating resizes. Each final run drained with zero standard validation errors or warnings. The combined run used one command stream and [`cd19b21`](https://github.com/5headsmartbtw/leonida-framelab/commit/cd19b21d7a238042619b49574b7d0a58ad807662) after a teardown fix. Extended SyncVal remains a separate gate.
 
-## Run the portable tests
+| 10,000-frame profile | SR / FG evaluations | Verified SR / FG readbacks | Peak working set (MiB) | Peak device-local VRAM (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| SR / `400d7c7` | 10,000 / 0 | 5 / 0 | 415.6 | 232.8 |
+| FG / `400d7c7` | 0 / 10,000 | 0 / 100 | 471.4 | 246.8 |
+| SR + FG / `cd19b21` | 10,000 / 10,000 | 5 / 100 | 497.4 | 428.2 |
+
+## Quick start
+
+### CPU-only contract tests
+
+CMake 3.20+ and a C++20 compiler are sufficient for the default portable build. Vulkan headers optionally enable CPU-only binding tests. The default build needs no GPU, proprietary runtime or game files.
 
 ```sh
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The neutral contract tests need only CMake and a C++20 compiler. Vulkan binding tests are added when headers are available, or with `-DFRAMEINPUTS_VULKAN_INCLUDE=/path/to/Vulkan/Include`. No GPU, game, NVIDIA SDK download or proprietary binary is required for the default build.
+### Standalone Vulkan GPU handoff
 
-The Windows GPU sample is opt-in. Point CMake and the runtime at separately acquired dependencies. The GPU runner accepts an explicit executable and writes results to a new log directory on each run. See [build and reproduce](docs/BUILD.md).
+Use a Vulkan 1.2+ device, Vulkan SDK and Khronos validation layers. This is a standalone executable for compatible AMD, Intel or NVIDIA devices. It requests synchronization validation, checks all 64 pixels after the consumer fence and reports unsupported queue configurations as skips. [Fixture and requirements](tests/vulkan-handoff/README.md)
 
-## Evidence, not just a loaded DLL
+```sh
+cmake -S tests/vulkan-handoff -B build-handoff -DCMAKE_BUILD_TYPE=Release
+cmake --build build-handoff --config Release
+ctest --test-dir build-handoff -C Release -V
+```
 
-- **VSync Off:** 6 Evaluate, 5 verified intermediate images, 6 real + 5 generated Present, validation 0 errors / 0 warnings.
-- **VSync On:** the same checks passed in FIFO mode.
-- **Missing depth:** source frame 2 was rejected before NGX; 6 real Present continued, the next valid frame reset history, FG recovered.
-- **Baseline comparison:** the deterministic RGBA16F output matched the preserved baseline byte for byte.
-- **Live test:** 10,605 source frames, 7,380 Evaluate, 7,375 generated Present; FG errors 0, input rejections 0, validation 0/0.
+### Install the SDK for an external app
 
-See the [Phase 3 logs](docs/phase3/evidence) and [validation report](docs/phase3/VALIDATION.en.md). The original local sample baseline is `a175d35f01a7c172429f79af27b6c6d43704b6b9` and the Phase 3 snapshot is `b017e469d740e167dc45db95c67b0737d3d4594b`. These revisions identify the source checkout used for those measurements.
+```sh
+cmake -S . -B build-sdk -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build-sdk --config Release
+cmake --install build-sdk --config Release --prefix ./install
+```
 
-<img src="docs/assets/sample-fg.png" alt="Synthetic 3D sample: NVIDIA intermediate frame and current real frame" width="100%" />
-<sub>Own synthetic scene, diagnostic readback. This is not a screenshot or frame from GTA VI.</sub>
+```cmake
+find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED)
+target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
+```
+
+Point the consumer's `CMAKE_PREFIX_PATH` at the install prefix and include `<framelab/framelab.h>`. For a shared build, configure a separate build directory with `BUILD_SHARED_LIBS=ON`. The opt-in Windows x64 GPU modules use separately obtained dependencies. See [C/C++ installation and examples](docs/sdk/README.md), [D3D12FG](docs/sdk/D3D12_FG.md), [VulkanSR](docs/sdk/VULKAN_SR.md), [Rust FFI](bindings/rust/README.md) and [NVIDIA sample setup](docs/BUILD.md).
+
+## Limits and release blockers
+
+- **Native Vulkan FG SyncVal remains unresolved.** The RTX 2050 experimental profile and RTX 5090 official runtime both produced eight write-after-write diagnostics inside NGX Evaluate in their two-frame installed and legacy traces. Standard Vulkan validation reported zero errors and warnings in the tested cases. On the RTX 5090 the strict standard runner still failed on separate libpng stderr warnings. The recording boundary locates the symptoms. The responsible component is still unknown. [Incident and reproducer](https://github.com/5headsmartbtw/leonida-framelab/issues/24) · [Independent results](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121)
+- **Low-memory compatibility is a merge requirement.** The maintainer compares revisions at 720p on the 4 GB RTX 2050 before accepting relevant GPU changes. RTX 5090 results add development and stress coverage. Capabilities, optional fallback, ABI compatibility and actual GPU completion remain part of the [release checklist](docs/sdk/RELEASE_CHECKLIST.md).
+- **Verified profiles are narrow.** Native driver-loss recovery, broad HDR and subresource coverage, production pacing and game inputs remain unverified. The tested rejection and simulated loss paths in [#26](https://github.com/5headsmartbtw/leonida-framelab/pull/26) have their own evidence.
+
+## Roadmap and external renderers
+
+- D3D12 next steps are [installed SR (FL-14)](https://github.com/5headsmartbtw/leonida-framelab/issues/29), [installed-client DXGI presentation (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) and [combined SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
+- Vulkan priorities are [SyncVal root cause (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), review of queue and failure handling, and broader independent hardware validation. See the [roadmap](docs/ROADMAP.md) and [open stabilization proposal #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
+- The local AMD FidelityFX Cauldron checkpoint linked the installed SDK, loaded its DLL, checked the ABI and continued standard Sponza rendering. A later standalone signed Streamline probe initialized the runtime and queried DLSS requirements. Native Cauldron SR and FG evaluation remain in development. The public integration proposal is in [#28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
+- Leonida and VIctory remain optional downstream integrations. See the [read-only integration notes](docs/integrations/leonida/README.md) and [VIctory audit](docs/integrations/victory/README.md).
+
+## Contribute
+
+- **CPU only:** run the default build or pick a contract or CI task such as FL-01.
+- **AMD or Intel:** use the standalone Vulkan handoff fixture and report the exact device, driver and supported or skipped cases.
+- **RTX 20/30 series:** start with portable tests, standalone Vulkan and supported SR. Record the native capability result and label any separately documented experimental FG configuration.
+- **RTX 40/50 series:** use the pinned [installed Vulkan FG draft instructions](https://github.com/5headsmartbtw/leonida-framelab/blob/a27e66b6a516695a74f21f1ab86ae709fdaa0347/docs/sdk/VULKAN_FG.md#reference-consumer-and-verification) with a compatible official runtime. Report readback, standard validation and SyncVal separately. See FL-08 and related claims on the board.
+- **SDK development:** use the external C/C++ smoke tests or Rust bindings, and check the D3D12 and Vulkan tasks above.
+
+In [Coordination #4](https://github.com/5headsmartbtw/leonida-framelab/issues/4), post `/claim FL-01` as the first line of a new comment to claim an available task. Use `/progress FL-01` to report progress and `/unclaim FL-01` to release it. Substitute the actual task ID. Standard Git, CMake and a compiler are enough. AI tooling is optional. Follow the [contribution guide](CONTRIBUTING.md).
 
 ## Repository map
 
-| Directory | Purpose |
-|---|---|
-| `fg/` | API-neutral contract and typed Vulkan validation |
-| `tests/` | CPU tests and local GPU reproduction script |
-| `sample/` | NVIDIA Vulkan sample derivative with direct NGX FG, SR reference path and VSync controls |
-| `native/windows/` | MIT-derived Windows Vulkan CUDA module layer/probe |
-| `experiments/d3d12/` | Independent D3D12 FG/capability baseline |
-| `docs/phase3/` | [Contract, audit, validation evidence and integration plan](docs/phase3/README.en.md) |
-| `LICENSES/` | Original third-party license texts |
+| Path | Purpose |
+| --- | --- |
+| `include/framelab/`, `src/`, `fg/` | Public headers, SDK implementation and API-neutral frame contracts |
+| `bindings/rust/`, `tests/external-consumer/` | Rust FFI and installed C/C++ consumer checks |
+| `tests/vulkan-handoff/`, `tests/` | Standalone queue validation, portable tests and GPU runners |
+| `sample/`, `samples/d3d12_fg/`, `experiments/d3d12/` | Vulkan reference, installed D3D12 FG client and older standalone D3D12 experiments |
+| `native/windows/`, `docs/`, `LICENSES/` | Experimental Windows layer, implementation/evidence guides and upstream license texts |
 
-## What comes next?
+## Contributors
 
-The open milestones include independent hardware replication, a tested multi-queue consumer and an SR + FG experiment in the synthetic scene. Leonida integration also needs a verified semantic resource provider. See the [roadmap](docs/ROADMAP.md), [pipeline audit](docs/phase3/LEONIDA_AUDIT.en.md) and [integration plan](docs/phase3/INTEGRATION_PLAN.en.md).
-
-The original Streamline Vulkan FG preflight can still report `AdapterUnsupported`. Its result is not overridden; the verified direct-NGX path is a separate backend. HDR, arbitrary subresources, game inputs, device-loss recovery and production frame pacing remain outside the validated profile.
+| Contributor | Contributions |
+| --- | --- |
+| [@5headsmartbtw](https://github.com/5headsmartbtw) | Founder, maintainer, SDK architecture and development |
+| [@JoeY54](https://github.com/JoeY54) | D3D12 SR development, Vulkan SyncVal research and independent GPU validation |
+| [@akimfomin](https://github.com/akimfomin) | Independent Vulkan validation and PortBridge coordination |
 
 ## License and credits
 
-Original project contributions are **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. Keep the copyright and license notice when reusing them. Imported NVIDIA sample portions retain Apache-2.0; the dlssg-open-derived port retains its original MIT attribution. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+Original project contributions are **MIT**, Copyright © 2026 **[5headsmartbtw](https://github.com/5headsmartbtw)**. Retain the copyright and license notice. Imported [NVIDIA vk_streamline](https://github.com/nvpro-samples/vk_streamline) portions retain Apache-2.0. The [dlssg-open](https://github.com/dniminenn/dlssg-open)-derived port retains its original MIT attribution. [LICENSE](LICENSE) · [NOTICE.md](NOTICE.md)
 
-Thanks to [nvpro-samples/vk_streamline](https://github.com/nvpro-samples/vk_streamline), [dniminenn/dlssg-open](https://github.com/dniminenn/dlssg-open), the Streamline/DLSS teams and Leonida contributors. NVIDIA SDKs/runtime DLLs/kernels and game files are **not distributed** here. Obtain external dependencies under their own terms.
+Thanks to the DLSS/Streamline teams and Leonida contributors, to **[@JoeY54](https://github.com/JoeY54)** for both independent AMD reports and RTX 5090 validation, and to **[@akimfomin](https://github.com/akimfomin)** for RTX 4070 Ti SUPER handoff validation and [PortBridge](https://github.com/akimfomin/PortBridge) coordination.
 
-Special thanks to @akimfomin from PortBridge for independently reproducing our Vulkan handoff tests on an RTX 4070 Ti SUPER.
+Use original synthetic or appropriately licensed inputs and follow the [No Game Files policy](CONTRIBUTING.md#no-gta-vi-game-files). Obtain NVIDIA SDKs, runtimes and other proprietary dependencies separately under their respective terms.

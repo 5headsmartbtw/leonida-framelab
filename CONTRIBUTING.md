@@ -30,3 +30,9 @@ python scripts/check_no_game_files.py --base origin/main
 Run the last command after committing on your branch. It inspects the submitted history as Git objects. CI checks known payload indicators and runs portable tests on Windows and Linux. Maintainers review provenance, especially for source, media and changes to the CI rules. Passing CI alone cannot establish that files are original or redistributable.
 
 For rendering changes, include applicable synthetic image and validation evidence. Record GPU, driver, OS, SDK/runtime, API/backend and exact reproduction commands. Distinguish rendered frames, generated images, API Present counts and physical display measurements. Keep unknown depth, motion vectors or camera metadata unavailable and preserve genuine capability results. See [Build and reproduce](docs/BUILD.md) for GPU prerequisites. Hosted CI does not establish real GPU or retail game compatibility.
+
+## GPU changes and low-memory validation
+
+Preserve previously verified hardware/runtime paths and the installed ABI. Query GPU and runtime capabilities before enabling optional features, preserve ordinary rendering on unsupported or allocation-failure paths, and report official NVIDIA support separately from experimental compatibility profiles. Include applicable deterministic synchronization and lifetime tests with the D3D12 debug layer or Vulkan synchronization validation enabled.
+
+Use the hardware available to you and include reproducible commands, profiles, actual results and explicit skips in the PR. For relevant GPU implementation changes, a maintainer compares the last working and proposed revisions on the RTX 2050 Laptop GPU (4 GB) at 1280×720 before merge. RTX 5090 performance and stress runs supplement that comparison. The [SDK release checklist](docs/sdk/RELEASE_CHECKLIST.md#rtx-2050-low-memory-merge-gate) specifies the metrics, baseline-derived tolerances and stress cases.

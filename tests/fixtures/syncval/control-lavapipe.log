@@ -1,0 +1,156 @@
+SYNCVAL_CONTROL_LAYER name=VK_LAYER_KHRONOS_validation spec=1.4.363 implementation=1 extra_properties=1
+SYNCVAL_CONTROL_DEVICE index=0 name="llvmpipe (LLVM 20.1.2, 256 bits)" api=1.4.318 vendor=0x10005 device=0x0000 driver_id=13 driver="llvmpipe" driver_info="Mesa 25.2.8-0ubuntu0.24.04.5 (LLVM 20.1.2)" queue_family=0 synchronization2=1
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-transfer-write expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-transfer-write expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-clear-write expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-clear-write expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-all-commands expect=none timing=record
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-all-commands expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-no-dst-access expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdClearColorImage(): WRITE_AFTER_WRITE hazard detected. vkCmdClearColorImage writes to VkImage 0x20000000002[framelab.syncval.control.image], which was previously written during an image layout transition initiated by vkCmdPipelineBarrier[framelab.syncval.control]. 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior layout transition.
+Image clear subresource range 0: {
+  aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1
+}
+[Extra properties]
+message_type = ImageSubresourceRangeError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = SYNC_IMAGE_LAYOUT_TRANSITION
+write_barriers = 0
+command = vkCmdClearColorImage
+prior_command = vkCmdPipelineBarrier
+prior_debug_region = framelab.syncval.control
+region_index = 0
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-no-dst-access expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-bottom-of-pipe expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdClearColorImage(): WRITE_AFTER_WRITE hazard detected. vkCmdClearColorImage writes to VkImage 0x20000000002[framelab.syncval.control.image], which was previously written during an image layout transition initiated by vkCmdPipelineBarrier[framelab.syncval.control]. 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior layout transition.
+Image clear subresource range 0: {
+  aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1
+}
+[Extra properties]
+message_type = ImageSubresourceRangeError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = SYNC_IMAGE_LAYOUT_TRANSITION
+write_barriers = 0
+command = vkCmdClearColorImage
+prior_command = vkCmdPipelineBarrier
+prior_debug_region = framelab.syncval.control
+region_index = 0
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-bottom-of-pipe expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync1-compute-write expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdClearColorImage(): WRITE_AFTER_WRITE hazard detected. vkCmdClearColorImage writes to VkImage 0x20000000002[framelab.syncval.control.image], which was previously written during an image layout transition initiated by vkCmdPipelineBarrier[framelab.syncval.control]. 
+The current synchronization allows VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT accesses at VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, but to prevent this hazard, it must allow VK_ACCESS_2_TRANSFER_WRITE_BIT accesses at VK_PIPELINE_STAGE_2_CLEAR_BIT.
+Image clear subresource range 0: {
+  aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1
+}
+[Extra properties]
+message_type = ImageSubresourceRangeError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = SYNC_IMAGE_LAYOUT_TRANSITION
+write_barriers = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT(VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT)
+command = vkCmdClearColorImage
+prior_command = vkCmdPipelineBarrier
+prior_debug_region = framelab.syncval.control
+region_index = 0
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=image-transition-clear/sync1-compute-write expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=image-transition-clear/sync2-copy-stage expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdClearColorImage(): WRITE_AFTER_WRITE hazard detected. vkCmdClearColorImage writes to VkImage 0x20000000002[framelab.syncval.control.image], which was previously written during an image layout transition initiated by vkCmdPipelineBarrier2[framelab.syncval.control]. 
+The current synchronization allows VK_ACCESS_2_TRANSFER_WRITE_BIT accesses at VK_PIPELINE_STAGE_2_COPY_BIT, but to prevent this hazard, it must allow these accesses at VK_PIPELINE_STAGE_2_CLEAR_BIT.
+Image clear subresource range 0: {
+  aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1
+}
+[Extra properties]
+message_type = ImageSubresourceRangeError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = SYNC_IMAGE_LAYOUT_TRANSITION
+write_barriers = VK_PIPELINE_STAGE_2_COPY_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+command = vkCmdClearColorImage
+prior_command = vkCmdPipelineBarrier2
+prior_debug_region = framelab.syncval.control
+region_index = 0
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=image-transition-clear/sync2-copy-stage expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/no-barrier expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdFillBuffer(): WRITE_AFTER_WRITE hazard detected. vkCmdFillBuffer writes to dstBuffer VkBuffer 0x40000000004[framelab.syncval.control.buffer], which was previously written by another vkCmdFillBuffer[framelab.syncval.control] command. 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior write of the same type at the same stage.
+Buffer access region: {
+  offset = 0
+  size = 4096
+}
+[Extra properties]
+message_type = BufferError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+write_barriers = 0
+command = vkCmdFillBuffer
+prior_command = vkCmdFillBuffer
+prior_debug_region = framelab.syncval.control
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=buffer-fill-fill/no-barrier expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/transfer-barrier expect=none timing=record
+SYNCVAL_CONTROL_END case=buffer-fill-fill/transfer-barrier expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/sync2-copy-stage expect=WRITE_AFTER_WRITE timing=record
+SAMPLE_VALIDATION severity=4096 vkCmdFillBuffer(): WRITE_AFTER_WRITE hazard detected. vkCmdFillBuffer writes to dstBuffer VkBuffer 0x40000000004[framelab.syncval.control.buffer], which was previously written by another vkCmdFillBuffer[framelab.syncval.control] command. 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior write of the same type at the same stage.
+Buffer access region: {
+  offset = 0
+  size = 4096
+}
+[Extra properties]
+message_type = BufferError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+write_barriers = 0
+command = vkCmdFillBuffer
+prior_command = vkCmdFillBuffer
+prior_debug_region = framelab.syncval.control
+seq_no = 1
+reset_no = 0
+SYNCVAL_CONTROL_END case=buffer-fill-fill/sync2-copy-stage expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-fill/sync2-clear-stage expect=none timing=record
+SYNCVAL_CONTROL_END case=buffer-fill-fill/sync2-clear-stage expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/queue-order-only expect=WRITE_AFTER_WRITE timing=submit
+SAMPLE_VALIDATION severity=4096 vkQueueSubmit(): pSubmits[0].pCommandBuffers[0] WRITE_AFTER_WRITE hazard detected. vkCmdFillBuffer[framelab.syncval.control] (from VkCommandBuffer 0x55ce3ee060e0 submitted on the current VkQueue 0x55ce3d3087e0) writes to dstBuffer VkBuffer 0x40000000004[framelab.syncval.control.buffer], which was previously written by another vkCmdFillBuffer[framelab.syncval.control] command (from VkCommandBuffer 0x55ce3d300660 submitted on VkQueue 0x55ce3d3087e0). 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior write of the same type at the same stage.
+Buffer access region: {
+  offset = 0
+  size = 4096
+}
+[Extra properties]
+message_type = SubmitTimeError
+hazard_type = WRITE_AFTER_WRITE
+access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+prior_access = VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)
+write_barriers = 0
+command = vkCmdFillBuffer
+prior_command = vkCmdFillBuffer
+debug_region = framelab.syncval.control
+prior_debug_region = framelab.syncval.control
+submit_index = 5
+batch_index = 0
+command_buffer_index = 0
+seq_no = 1
+reset_no = 0
+batch_tag = 33
+SYNCVAL_CONTROL_END case=buffer-fill-submit/queue-order-only expect=WRITE_AFTER_WRITE messages=1 hazards=1 readback=n/a verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/host-fence-wait expect=none timing=submit
+SYNCVAL_CONTROL_END case=buffer-fill-submit/host-fence-wait expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_BEGIN case=buffer-fill-submit/leading-barrier expect=none timing=submit
+SYNCVAL_CONTROL_END case=buffer-fill-submit/leading-barrier expect=none messages=0 hazards=0 readback=pass verdict=PASS
+SYNCVAL_CONTROL_SUMMARY cases=14 passed=14 failed=0 skipped=0 outside=0
+SAMPLE_VALIDATION_SUMMARY errors=7 warnings=0
