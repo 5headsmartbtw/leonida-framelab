@@ -114,7 +114,7 @@ The [external consumer](../../samples/d3d12_sr) and [`tests/run_d3d12_sr_checks.
 
 ### RTX 5090 with the official runtime
 
-Commit `a2ccd3f` was tested on a GeForce RTX 5090 with driver 621.24 under Windows 11 Pro build 26300.9974. The runtime was `nvngx_dlss.dll` 310.9.1.0 from the DLSS SDK v310.9.1 release directory, with no proxy or layer, so this is an official NVIDIA runtime profile. The SDK was built with MSVC 19.52 from Visual Studio 2026 (`-G "Visual Studio 18 2026"`) and CMake 4.3.1, then installed with D3D12SR and D3D12FG enabled. The external client was built from a separate tree against that install. The SDK CTest passed 5 of 5 tests, and the client CTest passed 1 of 1. The runner passed every case under both Windows PowerShell 5.1 and PowerShell 7.7.
+Commit `ce9729f` was tested on a GeForce RTX 5090 with driver 621.24 under Windows 11 Pro build 26300.9974. The runtime was `nvngx_dlss.dll` 310.9.1.0 from the DLSS SDK v310.9.1 release directory, with no proxy or layer, so this is an official NVIDIA runtime profile. The SDK was built with MSVC 19.52 from Visual Studio 2026 (`-G "Visual Studio 18 2026"`) and CMake 4.3.1, then installed with D3D12SR and D3D12FG enabled. The external client was built from a separate tree against that install. The SDK CTest passed 5 of 5 tests, and the client CTest passed 1 of 1. The runner passed every case under both Windows PowerShell 5.1 and PowerShell 7.7.
 
 | Case | Result |
 | --- | --- |
@@ -126,7 +126,9 @@ Commit `a2ccd3f` was tested on a GeForce RTX 5090 with driver 621.24 under Windo
 
 The runtime reported optimal render extents and ranges of 853×480 in 640×360–1280×720 for 1280×720 Quality, 557×313 in 480×270–960×540 for 960×540 Balanced, and 640×360 in 640×360–1280×720 for 1280×720 Performance. The saved 1280×720 Performance readback had SHA-256 `91ddc01551539a648d42323cd0ae72a02fdd6e09ed75c554367e24068d9f9f62` in all three correctness runs.
 
-The first run, at `e28aa7a`, verified the same readbacks. The debug-layer runs reported four ID 527 errors on NGX-internal resources right after the discarded recording. Commit `a2ccd3f` removed them by requiring reconfiguration after cancellation. That run also found that Windows PowerShell 5.1 reported a null exit code until the runner read the process handle.
+The first run, at `6622b37`, verified the same readbacks. The debug-layer runs reported four ID 527 errors on NGX-internal resources right after the discarded recording. Commit `ce9729f` removed them by requiring reconfiguration after cancellation. That run also found that Windows PowerShell 5.1 reported a null exit code until the runner read the process handle (`c3039b4`).
+
+The branch was re-attributed to the owner on 2026-11-27 without changing any tree. `6622b37` and `ce9729f` were `e28aa7a` and `a2ccd3f` before that. The later commit `bfcbbb9` changes only NGX session registry initialization, so that the noexcept FG exclusive-claim path no longer allocates. It has not yet been run on hardware.
 
 On the same install and machine, the existing [D3D12 FG consumer](../../samples/d3d12_fg) exited with 0. It completed six submissions with five verified interpolations and three final lease releases. Its readback hash differs from the RTX 2050 reference, which used a different runtime profile.
 
