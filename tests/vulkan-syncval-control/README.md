@@ -25,10 +25,16 @@ Each case runs in a `framelab.syncval.control` debug region on `framelab.syncval
 | `image-transition-clear/sync1-bottom-of-pipe` | Same | `BOTTOM_OF_PIPE` / no access | WAW |
 | `image-transition-clear/sync1-compute-write` | Same, `GENERAL` | `COMPUTE_SHADER` / `SHADER_WRITE` | WAW |
 | `image-transition-clear/sync2-copy-stage` | Same | `COPY` / `TRANSFER_WRITE` | WAW |
+| `image-transition-clear/ngx-shape` | Same, `GENERAL`, recorded #24 shape | `ALL_COMMANDS` on both sides, `SHADER_READ\|SHADER_WRITE` on both sides | WAW |
+| `image-transition-clear/ngx-shape-dst-transfer-write` | Same | As above plus `TRANSFER_WRITE` in the destination access | Clean, readback |
 | `buffer-fill-fill/no-barrier` | Fill, then fill | None | WAW |
 | `buffer-fill-fill/transfer-barrier` | Same | `TRANSFER` / `TRANSFER_WRITE` | Clean, readback |
 | `buffer-fill-fill/sync2-copy-stage` | Same | `COPY` / `TRANSFER_WRITE` on both sides | WAW from layer 1.3.280; clean before |
 | `buffer-fill-fill/sync2-clear-stage` | Same | `CLEAR` / `TRANSFER_WRITE` on both sides | Clean from layer 1.3.280, readback; WAW before |
+| `buffer-fill-fill/ngx-shape` | Same, recorded #24 shape | Buffer barrier, `ALL_COMMANDS` and `SHADER_READ\|SHADER_WRITE` on both sides | WAW, `write_barriers = 0` |
+| `buffer-fill-fill/ngx-shape-src-transfer-write` | Same | As above plus `TRANSFER_WRITE` in the source access only | WAW |
+| `buffer-fill-fill/ngx-shape-dst-transfer-write` | Same | As above plus `TRANSFER_WRITE` in the destination access only | WAW, `write_barriers = 0` |
+| `buffer-fill-fill/ngx-shape-both-transfer-write` | Same | As above plus `TRANSFER_WRITE` on both sides | Clean, readback |
 | `buffer-fill-submit/queue-order-only` | Fill in one submission, fill in the next | Submission order only | Submit-time WAW |
 | `buffer-fill-submit/host-fence-wait` | Same | Host waits for the first fence | Clean, readback |
 | `buffer-fill-submit/leading-barrier` | Same | Second submission starts with a `TRANSFER` barrier | Clean, readback |
@@ -45,4 +51,15 @@ These runs used Mesa lavapipe, not NVIDIA hardware, NGX or the #24 workload. The
 | Khronos validation layer `v1.4.369` ([`6ca326f`](https://github.com/KhronosGroup/Vulkan-ValidationLayers/commit/6ca326f85cd2563308e91b9839127387c00a170a)), built the same way | Same | 14/14 passed, exit 0. `syncval_report.py --compare` found the same 7 diagnostic signatures as 1.4.363.1. Only the internal `batch_tag` value differed. |
 | Ubuntu `vulkan-validationlayers` 1.3.275.0-1 | Same | 14/14 passed with that revision's fill classification. It has no `VK_EXT_layer_settings`, so the test used `VK_EXT_validation_features`. The messages use the older `Access info (...)` format without extra properties. [Raw log](../fixtures/syncval/control-lavapipe-1.3.275.log) |
 
-The fixture was compiled with GCC 13.3 and Clang 18 (`-Wall -Wextra`) against the Ubuntu Vulkan headers 1.3.275 and loader 1.3.275. In both runs, every positive control reported the prior write and its barrier scope as the case intended. The negative controls were clean. These results are consistent with correct reporting on this software device. They do not show how the layer behaves with NVIDIA drivers.
+The fixture was compiled with GCC 13.3 and Clang 18 (`-Wall -Wextra`) against the Ubuntu Vulkan headers 1.3.275 and loader 1.3.275. In both runs, every positive control reported the prior write and its barrier scope as the case intended. The negative controls were clean. These results are consistent with correct reporting on this software device. They do not show how the layer behaves with NVIDIA drivers. The software-device runs predate the six `ngx-shape` cases.
+
+The `ngx-shape` cases reproduce the barriers that `VK_LAYER_LUNARG_api_dump` recorded inside `nv.ngx.dlssg.Evaluate` before the #24 clears and between the #24 fills ([FL-17 report](https://github.com/5headsmartbtw/leonida-framelab/issues/32#issuecomment-7212358004)). They use FrameLab-owned synthetic resources only.
+
+## Results on an NVIDIA device
+
+| Layer | Device and driver | Result |
+| --- | --- | --- |
+| Khronos validation layer 1.4.363.1 (Vulkan SDK) | RTX 5090, NVIDIA 621.24, Vulkan 1.4.357, Windows 11 26300, MSVC 19.52 | 20/20 passed: 10 WAW positives, 10 clean negatives with correct readback. Exit 1 because of 4 loader messages about third-party implicit-layer manifests, emitted before the first case. Extra properties were present. |
+| Khronos validation layer `vulkan-sdk-1.3.275.0` ([`780c653`](https://github.com/KhronosGroup/Vulkan-ValidationLayers/commit/780c65337e111c7385109c7b720d757a778e4fe2)), built from source | Same | 20/20 passed with that revision's fill classification. There were no extra properties and the same 4 loader messages. |
+
+On 1.4.363.1 the `buffer-fill-fill/ngx-shape` diagnostic has the same signature as the #24 fill diagnostics, including `write_barriers = 0`. The `image-transition-clear/ngx-shape` diagnostic matches the #24 clears except for its `write_barriers` stage list. The fixture enables no optional device features, so the layer leaves tessellation and geometry stages out of its expansion of `ALL_COMMANDS`. The two single-sided buffer variants show that both access masks need `TRANSFER_WRITE`: the source access to include the prior fill, and the destination access to include the next one.

@@ -48,12 +48,12 @@ It attributes each diagnostic to an `NGX_FG_NATIVE_BEGIN`/`END` window or a cont
 
 | ID | Hypothesis | Deciding evidence | Status |
 | --- | --- | --- | --- |
-| H1 | A synchronization1 barrier inside Evaluate transitions a private image without `TRANSFER` stage or `TRANSFER_WRITE` access in its destination scope and then clears it | Raw clear diagnostics show `prior_command = vkCmdPipelineBarrier`, `prior_debug_region = nv.ngx.dlssg.Evaluate` and `write_barriers` without `CLEAR_BIT(TRANSFER_WRITE)`. Same on the RTX 2050 profile and the official RTX 5090 runtime. The control passes on the same layer and driver. | Open: needs a raw trace (run 1) |
-| H2 | False positive in the validation layer or its interaction with the driver | `write_barriers` already contains `VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)`, a control negative case fails on that machine, or the result changes between layer revisions in a way the controls do not explain | Open: runs 1–3 |
-| H3 | The private buffer fills conflict across evaluations in different submissions | Fill diagnostics show `message_type = SubmitTimeError` and a prior `vkCmdFillBuffer` from an earlier submission. A diagnostic-only wait for frame N's fence before frame N+1 removes the fill diagnostics but not the clears. The 5 fills in 6 evaluations fit this pattern but do not establish it. | Open: runs 1 and 4 |
+| H1 | A synchronization1 barrier inside Evaluate transitions a private image without `TRANSFER` stage or `TRANSFER_WRITE` access in its destination scope and then clears it | Raw clear diagnostics show `prior_command = vkCmdPipelineBarrier`, `prior_debug_region = nv.ngx.dlssg.Evaluate` and `write_barriers` without `CLEAR_BIT(TRANSFER_WRITE)`. Same on the RTX 2050 profile and the official RTX 5090 runtime. The control passes on the same layer and driver. | Supported on the official RTX 5090 runtime (runs 1, 2 and 3b below); the RTX 2050 profile is not yet rerun |
+| H2 | False positive in the validation layer or its interaction with the driver | `write_barriers` already contains `VK_PIPELINE_STAGE_2_CLEAR_BIT(VK_ACCESS_2_TRANSFER_WRITE_BIT)`, a control negative case fails on that machine, or the result changes between layer revisions in a way the controls do not explain | Not supported on the RTX 5090: no raw scope contains `CLEAR_BIT(TRANSFER_WRITE)`, all controls pass on that machine, and the recorded barrier shapes reproduce on synthetic resources. Open for other stacks |
+| H3 | The private buffer fills conflict across evaluations in different submissions | Fill diagnostics show `message_type = SubmitTimeError` and a prior `vkCmdFillBuffer` from an earlier submission. A diagnostic-only wait for frame N's fence before frame N+1 removes the fill diagnostics but not the clears. The 5 fills in 6 evaluations fit this pattern but do not establish it. | Ruled out on the RTX 5090: fills are record-time `BufferError`, and a full device wait before every frame leaves all 5 (runs 1 and 4) |
 | H4 | Device or feature configuration changes the recording path inside Evaluate | Vary one setting at a time: API version, `synchronization2`, queue family, installed versus legacy. The signature diff stays at zero or changes. | Open |
 | H5 | FrameLab's barriers on its own inputs and output cause the hazard | A diagnostic names a FrameLab-owned resource, or the prior access lies outside Evaluate. The published diagnostics name private runtime objects in the runtime's region, which makes H5 less likely without excluding it. | Open, less likely |
-| H6 | A synchronization2 barrier with `COPY` but not `CLEAR` precedes the fills | Fill diagnostics report a `COPY_BIT` scope, or report `write_barriers = 0` and disappear with layers before 1.3.280 while the clears remain | Open: runs 1 and 3 |
+| H6 | A synchronization2 barrier with `COPY` but not `CLEAR` precedes the fills | Fill diagnostics report a `COPY_BIT` scope, or report `write_barriers = 0` and disappear with layers before 1.3.280 while the clears remain | Ruled out on the RTX 5090: the run records no synchronization2 barrier at all (run 3b) |
 
 If the evidence points outside FrameLab, prepare a minimal reproducer, list affected and unaffected versions, and write an upstream-ready report. Leave #24 open for maintainer review. Global barriers, waits or suppression are diagnostic experiments only. The FL-17 gate rejects them as a fix unless the exact dependency is explained.
 
@@ -75,3 +75,18 @@ Use the pinned checkout, runtime and build commands from #24, for example [`a27e
 2. **Calibration on the same machine.** Build and run [`tests/vulkan-syncval-control`](../../tests/vulkan-syncval-control/README.md) with the same driver and layer. Select the NVIDIA adapter with `--device N`.
 3. **Layer revision only.** Repeat the six-frame SyncVal run with layers from SDK 1.3.275.0 or earlier, keeping everything else the same. Compare with `--compare`. Expect fill diagnostics to disappear under H6 and the clears to remain under H1.
 4. **Cross-frame dependency only.** Run a diagnostic-only variant that waits for frame N's fence before recording frame N+1. Compare signatures. This is an experiment and must not ship as a fix.
+
+## RTX 5090 results
+
+The [FL-17 report](https://github.com/5headsmartbtw/leonida-framelab/issues/32#issuecomment-7212206517) and its [follow-up](https://github.com/5headsmartbtw/leonida-framelab/issues/32#issuecomment-7212358004) ran the steps above on an RTX 5090 (driver 621.24) with the official runtime 310.9.1.0 at `a27e66b`.
+
+- **Run 1.** Traces gave 8/0, all inside Evaluate. The six-frame runs gave 11/0 on each topology, with identical signatures across topologies and between installed and legacy. Clears: `prior_command = vkCmdPipelineBarrier` in `nv.ngx.dlssg.Evaluate`, with `write_barriers` limited to shader stages and `SHADER_READ|SHADER_STORAGE_WRITE`. Fills: prior `vkCmdFillBuffer`, record time, `write_barriers = 0`.
+- **Run 2.** The control passed on the same machine.
+- **Run 3.** On layer 1.3.275 the six-frame run crashed (`0xC0000005`) in the first Evaluate, so it cannot decide H6.
+- **Run 3b.** One added variable, `VK_LAYER_LUNARG_api_dump`, left the diagnostics unchanged and recorded 0 synchronization2 barriers.
+  - Before each diagnosed clear: a synchronization1 transition `ALL_COMMANDS → ALL_COMMANDS`, `SHADER_READ|SHADER_WRITE` on both sides, `UNDEFINED → GENERAL`.
+  - Between each diagnosed fill pair: synchronization1 buffer barriers with the same stages and access, and no global memory barrier.
+  - The `ngx-shape` control cases reproduce both shapes and show that `TRANSFER_WRITE` is needed in the destination access for the clear, and on both sides for the fill.
+- **Run 4.** A full device wait before every frame left all signatures unchanged.
+
+These are recorded parameters. They do not by themselves assign responsibility between the runtime, the driver and the validation layer.
