@@ -128,7 +128,9 @@ The runtime reported optimal render extents and ranges of 853×480 in 640×360�
 
 The first run, at `6622b37`, verified the same readbacks. The debug-layer runs reported four ID 527 errors on NGX-internal resources right after the discarded recording. Commit `ce9729f` removed them by requiring reconfiguration after cancellation. That run also found that Windows PowerShell 5.1 reported a null exit code until the runner read the process handle (`c3039b4`).
 
-The branch was re-attributed to the owner on 2026-11-27 without changing any tree. `6622b37` and `ce9729f` were `e28aa7a` and `a2ccd3f` before that. The later commit `bfcbbb9` changes only NGX session registry initialization, so that the noexcept FG exclusive-claim path no longer allocates. It has not yet been run on hardware.
+The branch was re-attributed to the owner on 2026-11-27 without changing any tree. `6622b37` and `ce9729f` were `e28aa7a` and `a2ccd3f` before that. The later commit `bfcbbb9` changes only NGX session registry initialization, so that the noexcept FG exclusive-claim path no longer allocates.
+
+On 2026-11-27 the branch head `2ce20fa`, whose code is identical to `bfcbbb9`, was rerun on the same RTX 5090 with the same runtime and toolchain. The SDK CTest passed 5 of 5 tests. The SR and FG client CTests each passed 1 of 1. All three builds had 0 warnings. The runner passed all five cases under both Windows PowerShell 5.1 and PowerShell 7, and the debug-layer and GPU-based validation runs reported 0 errors and 0 warnings. The saved readback SHA-256 matched the earlier run. GPU time at p50 was 0.205 ms, and peak local VRAM was 279, 280 and 302 MB, the same as before. The D3D12 FG consumer exited with 0 and verified 5 interpolations, and its readback hash matched the earlier run.
 
 On the same install and machine, the existing [D3D12 FG consumer](../../samples/d3d12_fg) exited with 0. It completed six submissions with five verified interpolations and three final lease releases. Its readback hash differs from the RTX 2050 reference, which used a different runtime profile.
 
