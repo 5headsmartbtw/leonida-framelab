@@ -31,4 +31,10 @@ Add `--vsync` (sync interval 1) or `--no-vsync` (sync interval 0, with `DXGI_PRE
 .\tests\run_d3d12_fg_present_checks.ps1 -Executable .\build-client\Release\d3d12_fg.exe -RuntimeDirectory $runtimeDirectory -LogRoot .\framelab-logs
 ```
 
-Each `DXGI_PRESENT` line names the source frame, the previous frame for a generated image, the backbuffer index, the fence value of the copy and the CPU interval since the last Present call. Present counters and intervals are submission evidence. The window's display mode is recorded, but the actual present mode (independent flip or composed) and physical scanout are not measured by the program; record them separately, for example with PresentMon, and mark them unmeasured otherwise.
+Each `DXGI_PRESENT` line names the source frame, the previous frame for a generated image, the backbuffer index, the fence value of the copy and the CPU interval since the last Present call. Present counters and intervals are submission evidence. The window's display mode is recorded, but the actual present mode (independent flip or composed) and physical scanout are not measured by the program; record them separately and mark them unmeasured otherwise.
+
+With `-PresentMon <PresentMon 2.x executable>`, the runner records each presentation case with PresentMon's ETW trace. This needs elevation or membership of the Performance Log Users group; without elevation PresentMon lists the client as `<unknown>`, so the runner selects its rows by process ID. Each case directory then holds `presentmon.csv` with only the client's rows (PresentMon 1.x metrics). The JSON report adds, per case: presents, displayed and dropped frames, the present modes, `AllowsTearing`, the sync interval, and p50/p95/min/max of `msBetweenPresents`, `msBetweenDisplayChange` and `msUntilDisplayed`. These come from DXGI and DWM events; physical scanout remains unmeasured.
+
+```powershell
+.\tests\run_d3d12_fg_present_checks.ps1 -Executable .\build-client\Release\d3d12_fg.exe -RuntimeDirectory $runtimeDirectory -LogRoot .\framelab-logs -PresentMon $presentMon
+```

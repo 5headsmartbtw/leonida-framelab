@@ -51,3 +51,14 @@ On the reference RTX 2050 Laptop (Windows 11 build 26200, driver 617.14, externa
 The last output matched the prior synthetic [D3D12 reference](../../experiments/d3d12/FRAME_INPUTS.md) byte for byte. SHA-256 `3251fb1b43c329882cfa8236c2bb2828882fd608a19372feff7423bcb2b79128`. The first attempt failed at NGX initialization with other logging sinks disabled and no callback. The successful repeat kept the normal NGX logging configuration.
 
 This run covered image readback and fence lifetime. It skipped DXGI Present, D3D12 debug-layer validation, device-loss injection, cross-queue operation, stock-runtime compatibility and independent DLSS replication.
+
+DXGI presentation was measured on an RTX 5090: Windows 11 build 26300, driver 621.24, DLSS SDK v310.9.1 runtime, 3840×2160 display at 240 Hz. The run used `tests/run_d3d12_fg_present_checks.ps1 -PresentMon` with PresentMon 2.x ETW, not elevated, and all ten cases passed.
+
+- **Present mode.** The client's windowed 1280×720 flip-discard swapchain started in `Composed: Flip`. After about 100 presents (2.6–3.3 s), DWM promoted it to `Hardware Composed: Independent Flip`. In each 1800-frame run, with VSync on or off, that mode carried 3426–3427 of 3527 presents. The short FG cases (10–15 presents) stayed composed. The five-present no-FG case reached independent flip for its last two presents.
+- **Tearing.** With sync interval 0, PresentMon reported `AllowsTearing` only after the promotion.
+- **Dropped presents.** All dropped presents fell in the composed phase: 2–3 of 3527 per 1800-frame run.
+- **Intervals.** Display-change intervals followed the Present intervals:
+  - With VSync: p50 29.2 ms, p95 37.5 ms. Present-to-display time p50 was 2.9 ms.
+  - Without VSync: p50 27.7 ms, p95 37.7 ms. Present-to-display time p50 was 0.8 ms.
+
+  These intervals reflect the sample's per-Present GPU waits and readback, not production pacing. Physical scanout and end-to-end latency were not measured.
