@@ -12,7 +12,7 @@
 namespace frame_inputs {
 using Id = std::uint64_t;
 struct Extent { std::uint32_t width=0,height=0; bool operator==(const Extent&) const = default; };
-enum class Format { unknown,rgba8_unorm,bgra8_unorm,rgba16_float,rg16_float,rg32_float,r32_float,d24s8,d32_float };
+enum class Format { unknown,rgba8_unorm,bgra8_unorm,rgba16_float,rg16_float,rg32_float,r32_float,d24s8,d32_float,rgb10a2_unorm };
 enum class Provenance { unavailable,synthetic_renderer,verified_engine_binding };
 enum class State { unknown,shader_read,color_attachment,depth_attachment,general };
 enum class ClipSpace { unknown,y_up_zero_to_one,y_down_zero_to_one };
@@ -63,7 +63,8 @@ struct Result {
     std::string_view reason{};
     explicit operator bool() const { return error==Error::none; }
 };
-inline bool colorFormat(Format f) {return f==Format::rgba8_unorm||f==Format::bgra8_unorm||f==Format::rgba16_float;}
+// Colour formats the neutral description accepts. Each backend's profile decides which it supports.
+inline bool colorFormat(Format f) {return f==Format::rgba8_unorm||f==Format::bgra8_unorm||f==Format::rgba16_float||f==Format::rgb10a2_unorm;}
 template<std::size_t N> inline bool finite(const std::array<float,N>& a) {for(float f:a)if(!std::isfinite(f))return false;return true;}
 inline Result validate(const FrameInputs& f) {
     if(f.deviceLost)return {Error::device_lost,"device lost"};

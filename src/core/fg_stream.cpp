@@ -4,6 +4,7 @@
 #include "fg_stream_internal.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <new>
 #include <optional>
@@ -65,8 +66,9 @@ FrameLabStatus statusFor(fi::Error error)
 constexpr fi::Format formats[] = {
     fi::Format::unknown, fi::Format::rgba8_unorm, fi::Format::bgra8_unorm,
     fi::Format::rgba16_float, fi::Format::rg16_float, fi::Format::rg32_float,
-    fi::Format::r32_float, fi::Format::d24s8, fi::Format::d32_float
+    fi::Format::r32_float, fi::Format::d24s8, fi::Format::d32_float, fi::Format::rgb10a2_unorm
 };
+static_assert(std::size(formats) == FRAMELAB_FORMAT_RGB10A2_UNORM + 1, "every public format is decoded");
 constexpr fi::State states[] = {
     fi::State::unknown, fi::State::shader_read, fi::State::color_attachment,
     fi::State::depth_attachment, fi::State::general

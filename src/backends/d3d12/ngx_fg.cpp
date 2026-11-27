@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <framelab/d3d12_fg.h>
 
+#include "fg_contract.hpp"
 #include "frame_bindings.hpp"
 #include "ngx_session.hpp"
 #include "../../core/fg_stream_internal.hpp"
@@ -10,6 +11,7 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_helpers_dlssg_d3d.h>
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -17,12 +19,32 @@
 using Microsoft::WRL::ComPtr;
 namespace fi = frame_inputs;
 namespace d3d = framelab::d3d12;
+namespace contract = framelab::d3d12::fg;
+
+static_assert(contract::dxgi::rgb10a2_unorm == DXGI_FORMAT_R10G10B10A2_UNORM &&
+              contract::dxgi::rgba8_unorm == DXGI_FORMAT_R8G8B8A8_UNORM &&
+              contract::dxgi::bgra8_unorm == DXGI_FORMAT_B8G8R8A8_UNORM);
+static_assert(contract::support1::texture2d == D3D12_FORMAT_SUPPORT1_TEXTURE2D &&
+              contract::support1::shader_load == D3D12_FORMAT_SUPPORT1_SHADER_LOAD &&
+              contract::support1::shader_sample == D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE &&
+              contract::support1::typed_unordered_access_view == D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW &&
+              contract::support2::uav_typed_store == D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+static_assert(contract::flag::hdr10 == FRAMELAB_D3D12_FG_HDR10);
 
 namespace {
 enum class Work { none, initialize, evaluate };
 enum class Phase { idle, recorded, record_failed, submitted };
 
-NVSDK_NGX_DLSSG_Opt_Eval_Params optionsFor(const fi::FrameInputs& frame)
+fi::Format neutralFormat(uint32_t format)
+{
+    switch (format) {
+    case FRAMELAB_FORMAT_BGRA8_UNORM: return fi::Format::bgra8_unorm;
+    case FRAMELAB_FORMAT_RGB10A2_UNORM: return fi::Format::rgb10a2_unorm;
+    default: return fi::Format::rgba8_unorm;
+    }
+}
+
+NVSDK_NGX_DLSSG_Opt_Eval_Params optionsFor(const fi::FrameInputs& frame, bool hdr10)
 {
     const auto& c = frame.camera;
     NVSDK_NGX_DLSSG_Opt_Eval_Params options{};
@@ -45,6 +67,8 @@ NVSDK_NGX_DLSSG_Opt_Eval_Params optionsFor(const fi::FrameInputs& frame)
     options.depthInverted = c.depthInverted;
     options.cameraMotionIncluded = c.cameraMotionIncluded;
     options.orthoProjection = c.orthographic;
+    // HDR10 PQ color, as configured at create. FrameLab applies no tone mapping.
+    options.colorBuffersHDR = hdr10;
     options.motionVectorsInvalidValue = 1e30f;
     options.backbufferSubrectSize = {frame.color.extent.width, frame.color.extent.height};
     options.depthSubrectSize = {frame.depth.extent.width, frame.depth.extent.height};
@@ -67,7 +91,8 @@ struct FrameLabD3D12Fg {
     ComPtr<ID3D12GraphicsCommandList> commands;
     std::array<ComPtr<ID3D12Resource>, 4> resources;
     fi::Id deviceId{}, queueId{};
-    FrameLabExtent extent{};
+    FrameLabExtent extent{}, renderExtent{};
+    contract::Color color{};
     uint64_t submittedValue{};
     FrameLabFgStream* stream{};
     NVSDK_NGX_Parameter* parameters{};
@@ -108,17 +133,44 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     if (!out) return FRAMELAB_INVALID_ARGUMENT;
     *out = nullptr;
     if (!config) return FRAMELAB_INVALID_ARGUMENT;
-    if (config->struct_size < sizeof *config || config->abi_version != FRAMELAB_ABI_VERSION)
-        return FRAMELAB_ABI_MISMATCH;
-    const auto& c = *config;
+    // Each published layout passes its own sizeof: the v0.4.0 fields (104 bytes on x64), then with
+    // render_extent (112), then with color_format and flags. An older layout's missing fields
+    // keep their zero defaults: render extent = output extent, RGBA8 SDR color. A field is read
+    // only when the caller's layout contains it. Other sizes are rejected, and nothing past the
+    // caller's struct_size is read.
+    constexpr contract::ConfigLayout layout{offsetof(FrameLabD3D12FgConfig, render_extent),
+                                            offsetof(FrameLabD3D12FgConfig, color_format),
+                                            sizeof(FrameLabD3D12FgConfig), alignof(FrameLabD3D12FgConfig)};
+    static_assert(contract::roundUp(layout.renderExtent, layout.align) < contract::roundUp(layout.colorFormat, layout.align) &&
+                  contract::roundUp(layout.colorFormat, layout.align) < layout.size,
+                  "each appended group extends the previous layout");
+    const size_t copied = contract::copiedBytes(layout, config->struct_size);
+    if (config->abi_version != FRAMELAB_ABI_VERSION || !copied) return FRAMELAB_ABI_MISMATCH;
+    FrameLabD3D12FgConfig c{};
+    std::memcpy(&c, config, copied);
     if (!c.device || !c.queue || !c.completion_fence || !c.device_id || !c.queue_id ||
         !c.extent.width || !c.extent.height || !c.project_id || !*c.project_id ||
         !c.engine_version || !c.ngx_runtime_directory || !*c.ngx_runtime_directory ||
         !c.log_directory || !*c.log_directory)
         return FRAMELAB_INVALID_ARGUMENT;
+    // Both dimensions zero select the output extent. One zero dimension, or a render extent larger
+    // than the output, is rejected.
+    if (!c.render_extent.width && !c.render_extent.height) c.render_extent = c.extent;
+    if (!c.render_extent.width || !c.render_extent.height || c.render_extent.width > c.extent.width ||
+        c.render_extent.height > c.extent.height)
+        return FRAMELAB_INVALID_DIMENSIONS;
+    contract::Color color{};
+    if (const auto selected = contract::selectColor(c.color_format, c.flags, color); selected != FRAMELAB_OK)
+        return selected;
     if (c.queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT ||
         !d3d::onDevice(*c.queue, *c.device) || !d3d::onDevice(*c.completion_fence, *c.device))
         return FRAMELAB_INVALID_RESOURCE_STATE;
+    // The color input is read and the generated image written through a typed UAV in this format.
+    // BGRA8 typed UAV stores in particular depend on the adapter and driver.
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support{static_cast<DXGI_FORMAT>(color.dxgi)};
+    if (FAILED(c.device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof support)) ||
+        !contract::deviceSupportsColor(support.Support1, support.Support2))
+        return FRAMELAB_UNSUPPORTED;
     const auto completed = c.completion_fence->GetCompletedValue();
     if (completed == UINT64_MAX) return FRAMELAB_DEVICE_LOST;
     // FG initializes and shuts down NGX itself, so it cannot share a live D3D12 SR session.
@@ -134,6 +186,8 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     fg->deviceId = c.device_id;
     fg->queueId = c.queue_id;
     fg->extent = c.extent;
+    fg->renderExtent = c.render_extent;
+    fg->color = color;
     fg->submittedValue = completed;
     const auto stream = framelab_fg_stream_create(FRAMELAB_ABI_VERSION, &fg->stream);
     if (stream != FRAMELAB_OK) return stream;
@@ -185,9 +239,12 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record_initialize(
     if (fg->ready) return FRAMELAB_INVALID_PHASE;
     if (!fg->directList(commands)) return FRAMELAB_INVALID_RESOURCE_STATE;
     NVSDK_NGX_DLSSG_Create_Params info{};
-    info.Width = info.RenderWidth = fg->extent.width;
-    info.Height = info.RenderHeight = fg->extent.height;
-    info.NativeBackbufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    info.Width = fg->extent.width;
+    info.Height = fg->extent.height;
+    info.RenderWidth = fg->renderExtent.width;
+    info.RenderHeight = fg->renderExtent.height;
+    // NGX fixes the backbuffer format at feature creation; the generated image uses it too.
+    info.NativeBackbufferFormat = fg->color.dxgi;
     fg->parameters->Set("DLSSG.SynchronousInit", 1u);
     fg->parameters->Set("DLSSG.EnableInterp", 1u);
     fg->commands = commands;
@@ -216,7 +273,9 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record(
         framelab_fg_cancel(fg->stream);
         return status;
     };
-    if (input.outputExtent != fi::Extent{fg->extent.width, fg->extent.height})
+    // The native feature is created for one output and one render extent; resizing recreates it.
+    if (input.outputExtent != fi::Extent{fg->extent.width, fg->extent.height} ||
+        input.renderExtent != fi::Extent{fg->renderExtent.width, fg->renderExtent.height})
         return reject(FRAMELAB_INVALID_DIMENSIONS);
     if (input.frameIndex == UINT64_MAX) return reject(FRAMELAB_INVALID_SEQUENCE);
     const auto color = borrow(bindings->color, input.color);
@@ -227,8 +286,10 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record(
                                   static_cast<D3D12_RESOURCE_STATES>(generated.state)};
     const d3d::RecordContext context{fg->deviceId, fg->queueId, bindings->command_stream_id,
                                     *fg->device.Get(), *fg->queue.Get(), *bindings->commands};
-    if (const auto native = d3d::check(input, context, color, depth, motion, output); !native) {
+    const d3d::ColorProfile profile{neutralFormat(fg->color.format), static_cast<DXGI_FORMAT>(fg->color.dxgi)};
+    if (const auto native = d3d::check(input, context, color, depth, motion, output, profile); !native) {
         if (native.error == fi::Error::unsupported) return reject(FRAMELAB_UNSUPPORTED);
+        if (native.error == fi::Error::image_description) return reject(FRAMELAB_INVALID_IMAGE_DESCRIPTION);
         if (native.error == fi::Error::sync) return reject(FRAMELAB_INVALID_SYNC);
         return reject(FRAMELAB_INVALID_RESOURCE_STATE);
     }
@@ -243,7 +304,7 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record(
     args.pDepth = depth.resource.get();
     args.pMVecs = motion.resource.get();
     args.pOutputInterpFrame = output.resource.get();
-    auto options = optionsFor(input);
+    auto options = optionsFor(input, fg->color.hdr10);
     fg->parameters->Set(NVSDK_NGX_DLSSG_Parameter_BackbufferFrameID, static_cast<unsigned long long>(input.frameIndex + 1));
     fg->parameters->Set("DLSSG.EnableInterp", 1u);
     fg->parameters->Set("DLSSG.IsRecording", 0u);

@@ -41,11 +41,22 @@ inline bool texture(const ImageBinding& binding, ID3D12Device& device, DXGI_FORM
         desc.SampleDesc.Count == 1 && desc.Format == format;
 }
 
-// The initial native profile is the tested synthetic D3D12 NGX input layout.
+// The color and generated-image format a backend was created with.
+struct ColorProfile {
+    fi::Format format = fi::Format::rgba8_unorm;
+    DXGI_FORMAT native = DXGI_FORMAT_R8G8B8A8_UNORM;
+};
+
+// The native profile: output-size color in the configured format, depth and unjittered motion at a
+// render extent no larger than the output, and a zero-jitter camera. Core validation already ties
+// color to the output extent and depth/motion to the render extent. Frame metadata whose color
+// format differs from the configured one is an image-description error; a native resource whose
+// description differs from the metadata is a binding error.
 // This check does not perform a resource barrier or a GPU wait.
 inline fi::Result check(const fi::FrameInputs& frame, const RecordContext& context,
                        const ImageBinding& color, const ImageBinding& depth,
-                       const ImageBinding& motion, const ImageBinding& output)
+                       const ImageBinding& motion, const ImageBinding& output,
+                       const ColorProfile& profile = {})
 {
     if (const auto result = fi::validate(frame); !result) return result;
     if (frame.device != context.deviceId || frame.sync.queue != context.queueId ||
@@ -56,24 +67,27 @@ inline fi::Result check(const fi::FrameInputs& frame, const RecordContext& conte
         context.queue.GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT ||
         context.commands.GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
         return {fi::Error::binding, "D3D12 command list or queue does not match the device"};
-    if (frame.renderExtent != frame.outputExtent || frame.hudless || frame.ui ||
-        frame.color.format != fi::Format::rgba8_unorm || frame.depth.format != fi::Format::r32_float ||
-        frame.motionVectors.format != fi::Format::rg16_float ||
+    if (frame.renderExtent.width > frame.outputExtent.width ||
+        frame.renderExtent.height > frame.outputExtent.height || frame.hudless || frame.ui ||
+        frame.depth.format != fi::Format::r32_float || frame.motionVectors.format != fi::Format::rg16_float ||
         frame.camera.projectionSpace != fi::ClipSpace::y_up_zero_to_one ||
         frame.camera.reprojectionSpace != fi::ClipSpace::y_up_zero_to_one ||
         frame.camera.jitterPixels != std::array<float, 2>{})
         return {fi::Error::unsupported, "unsupported D3D12 resource or camera profile"};
+    if (frame.color.format != profile.format)
+        return {fi::Error::image_description, "D3D12 color format differs from the configured format"};
 
     const fi::Image* inputs[]{&frame.color, &frame.depth, &frame.motionVectors};
     const ImageBinding* bindings[]{&color, &depth, &motion};
-    const DXGI_FORMAT formats[]{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16_FLOAT};
+    const DXGI_FORMAT formats[]{profile.native, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16_FLOAT};
     for (unsigned i = 0; i < 3; ++i) {
         const auto& input = *inputs[i];
         const auto& binding = *bindings[i];
         if (input.id != binding.id || input.ownerQueue != context.queueId ||
             input.allocationLease.owner_before(binding.resource) ||
             binding.resource.owner_before(input.allocationLease) ||
-            !texture(binding, context.device, formats[i], input.extent))
+            !texture(binding, context.device, formats[i], input.extent) ||
+            (binding.resource->GetDesc().Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE))
             return {fi::Error::binding, "D3D12 resource identity, owner, lease or description mismatch"};
         if (input.state != fi::State::shader_read || binding.state != D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
             return {fi::Error::state, "D3D12 input must be in non-pixel shader read state"};
@@ -83,7 +97,7 @@ inline fi::Result check(const fi::FrameInputs& frame, const RecordContext& conte
         if (binding.resource.get() == output.resource.get())
             return {fi::Error::binding, "D3D12 output aliases an input"};
     }
-    if (!texture(output, context.device, DXGI_FORMAT_R8G8B8A8_UNORM, frame.outputExtent) ||
+    if (!texture(output, context.device, profile.native, frame.outputExtent) ||
         output.state != D3D12_RESOURCE_STATE_UNORDERED_ACCESS ||
         !(output.resource->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
         return {fi::Error::binding, "D3D12 output needs a matching UAV resource"};

@@ -6,6 +6,11 @@ add_executable(d3d12_sr_contract_test test_d3d12_sr_contract.cpp)
 target_compile_features(d3d12_sr_contract_test PRIVATE cxx_std_20)
 target_include_directories(d3d12_sr_contract_test PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src")
 add_test(NAME d3d12_sr_contract COMMAND d3d12_sr_contract_test)
+# D3D12 FG configuration rules. Portable: no Windows, D3D12 or NGX headers.
+add_executable(d3d12_fg_contract_test test_d3d12_fg_contract.cpp)
+target_compile_features(d3d12_fg_contract_test PRIVATE cxx_std_20)
+target_include_directories(d3d12_fg_contract_test PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src")
+add_test(NAME d3d12_fg_contract COMMAND d3d12_fg_contract_test)
 if(WIN32)
   # Public D3D12 SR/FG headers against the Windows SDK, as C and C++. Links no FrameLab symbols.
   enable_language(C)
