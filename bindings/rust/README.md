@@ -64,6 +64,7 @@ The tests need neither a GPU nor the D3D12 components. Build the shared SDK and 
 | `FRAMELAB_D3D12_ABI_LAYOUT` | output of `d3d12_abi_layout` (Windows x64) | `tests/d3d12_abi.rs`: every D3D12 field offset, size, alignment and constant |
 | `FRAMELAB_LIBRARY` | absolute path of the installed shared library | `tests/runtime.rs` |
 | `FRAMELAB_LOADER_FIXTURES` | absolute path of the consumer build's `loader-fixtures` directory | `tests/runtime.rs` |
+| `FRAMELAB_EXPECT_D3D12_COMPONENTS` | set (any value) when `FRAMELAB_LIBRARY` was built with both D3D12 components | `tests/runtime.rs`: expects them present instead of absent (CI builds without them) |
 
 `d3d12_abi_layout` compiles the installed component headers when both components are installed, otherwise this tree's headers. It also checks every D3D12 function signature at compile time against a C mirror of the Rust `pfn` type. It references no FrameLab function. `loader_fixture.c` builds stand-in libraries: core only, wrong ABI, a missing core export, SR only, FG only, both, and a partial SR. The runtime tests use them to cover successful load, missing library, wrong ABI, missing exports, independent component availability and unloading.
 
@@ -79,5 +80,4 @@ CI runs this matrix on Windows and Linux. It also runs the runtime-only example 
 **Not covered here:**
 
 - The D3D12 tests on other targets: the features compile to nothing there.
-- Native evaluation with the D3D12 components.
-- Readback, fence completion and lease retention through Rust on a GPU. Those need separately built native SR and FG consumers.
+- Native evaluation, readback, fence completion and lease retention on a GPU. The separately built consumers in [`samples/rust_d3d12`](../../samples/rust_d3d12) cover them for SR and FG; they need an NVIDIA GPU and the DLSS runtime, so CI does not run them.

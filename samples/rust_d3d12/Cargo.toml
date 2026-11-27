@@ -1,0 +1,36 @@
+[package]
+name = "framelab-rust-d3d12"
+version = "0.1.0"
+edition = "2021"
+# windows 0.62 needs 1.82; framelab-sys itself keeps 1.77.
+rust-version = "1.82"
+license = "MIT"
+publish = false
+description = "Native D3D12 SR and FG consumers of the installed FrameLab SDK, loaded at run time"
+
+# A standalone project, built separately from the SDK, like the C++ samples.
+[workspace]
+
+[dependencies]
+# Runtime loading only: the executables neither link nor import FrameLab.dll.
+framelab-sys = { path = "../../bindings/rust", default-features = false, features = ["runtime", "d3d12-sr", "d3d12-fg"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D12",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Security",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+] }
+
+[[bin]]
+name = "framelab-rust-sr"
+path = "src/bin/sr.rs"
+
+[[bin]]
+name = "framelab-rust-fg"
+path = "src/bin/fg.rs"

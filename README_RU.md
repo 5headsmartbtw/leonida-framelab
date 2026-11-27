@@ -147,7 +147,7 @@ target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 | Путь | Назначение |
 | --- | --- |
 | `include/framelab/`, `src/`, `fg/` | Публичные заголовки, реализация SDK и независимые от API контракты кадров |
-| `bindings/rust/`, `tests/external-consumer/` | Rust FFI и проверки внешних клиентов на C/C++ |
+| `bindings/rust/`, `samples/rust_d3d12/`, `tests/external-consumer/` | Rust FFI, нативные клиенты D3D12 SR/FG на Rust и проверки внешних клиентов на C/C++ |
 | `tests/vulkan-handoff/`, `tests/` | Отдельный тест очередей, переносимые тесты и скрипты проверок GPU |
 | `sample/`, `samples/d3d12_fg/`, `experiments/d3d12/` | Пример Vulkan, клиент установленного D3D12 FG и ранние отдельные эксперименты D3D12 |
 | `native/windows/`, `docs/`, `LICENSES/` | Экспериментальный слой Windows, документация и результаты, тексты лицензий |
