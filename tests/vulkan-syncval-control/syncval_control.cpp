@@ -381,6 +381,24 @@ struct Fixture {
         vkCmdPipelineBarrier2(command, &dependency);
     }
 
+    // The synchronization1 transition recorded before each runtime clear in the #24 workload
+    // (api_dump, FL-17): ALL_COMMANDS on both sides, shader access on both sides, UNDEFINED -> GENERAL.
+    static constexpr VkAccessFlags ngxShaderAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+    void transitionNgxShape(VkCommandBuffer command, VkAccessFlags extraDstAccess)
+    {
+        VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.srcAccessMask = ngxShaderAccess;
+        barrier.dstAccessMask = ngxShaderAccess | extraDstAccess;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange = range;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
+    }
+
     void clear(VkCommandBuffer command, VkImageLayout layout)
     {
         VkClearColorValue value{};
@@ -474,6 +492,33 @@ struct Fixture {
         dependency.bufferMemoryBarrierCount = 1;
         dependency.pBufferMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(command, &dependency);
+    }
+
+    // The synchronization1 buffer barrier recorded between two runtime fills of the same buffer in
+    // the #24 workload (api_dump, FL-17), optionally widened by TRANSFER_WRITE on either side.
+    std::string fillNgxShapeFill(VkAccessFlags extraSrcAccess, VkAccessFlags extraDstAccess, bool execute)
+    {
+        const auto command = begin();
+        fill(command, firstFill);
+        VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        barrier.srcAccessMask = ngxShaderAccess | extraSrcAccess;
+        barrier.dstAccessMask = ngxShaderAccess | extraDstAccess;
+        barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer = buffer;
+        barrier.size = VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                             nullptr, 1, &barrier, 0, nullptr);
+        fill(command, secondFill);
+        if (!execute) {
+            end(command);
+            vkFreeCommandBuffers(device, pool, 1, &command);  // record-time control; never executed
+            return "n/a";
+        }
+        copyBufferToHost(command);
+        end(command);
+        submit(command);
+        retire({command});
+        return hostWordsEqual(bufferBytes, secondFill) ? "pass" : "fail";
     }
 
     std::string fillBarrierFill(VkPipelineStageFlags2 stage, bool execute)
@@ -584,6 +629,17 @@ std::vector<Case> cases()
                general, Expect::waw)},
         {"image-transition-clear/sync2-copy-stage", Expect::waw, "record", true, transitionClear2,
          sync2({VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT}, dst, Expect::waw)},
+        // Recorded #24 shapes (FL-17 api_dump on the official RTX 5090 runtime).
+        {"image-transition-clear/ngx-shape", Expect::waw, "record", false, transitionClear1,
+         [](Fixture& f) {
+             return f.imageCase([&](VkCommandBuffer c) { f.transitionNgxShape(c, 0); }, VK_IMAGE_LAYOUT_GENERAL,
+                                Expect::waw);
+         }},
+        {"image-transition-clear/ngx-shape-dst-transfer-write", Expect::none, "record", false, {},
+         [](Fixture& f) {
+             return f.imageCase([&](VkCommandBuffer c) { f.transitionNgxShape(c, VK_ACCESS_TRANSFER_WRITE_BIT); },
+                                VK_IMAGE_LAYOUT_GENERAL, Expect::none);
+         }},
         {"buffer-fill-fill/no-barrier", Expect::waw, "record", false,
          {"hazard_type = WRITE_AFTER_WRITE", "command = vkCmdFillBuffer", "prior_command = vkCmdFillBuffer"},
          [](Fixture& f) {
@@ -616,6 +672,21 @@ std::vector<Case> cases()
         {"buffer-fill-fill/sync2-clear-stage", Expect::waw, "record", true, {},
          [](Fixture& f) { return f.fillBarrierFill(VK_PIPELINE_STAGE_2_CLEAR_BIT, true); }, 0,
          VK_MAKE_API_VERSION(0, 1, 3, 280)},
+        {"buffer-fill-fill/ngx-shape", Expect::waw, "record", false,
+         {"hazard_type = WRITE_AFTER_WRITE", "command = vkCmdFillBuffer", "prior_command = vkCmdFillBuffer",
+          "write_barriers = 0"},
+         [](Fixture& f) { return f.fillNgxShapeFill(0, 0, false); }},
+        {"buffer-fill-fill/ngx-shape-src-transfer-write", Expect::waw, "record", false,
+         {"hazard_type = WRITE_AFTER_WRITE", "command = vkCmdFillBuffer", "prior_command = vkCmdFillBuffer"},
+         [](Fixture& f) { return f.fillNgxShapeFill(VK_ACCESS_TRANSFER_WRITE_BIT, 0, false); }},
+        {"buffer-fill-fill/ngx-shape-dst-transfer-write", Expect::waw, "record", false,
+         {"hazard_type = WRITE_AFTER_WRITE", "command = vkCmdFillBuffer", "prior_command = vkCmdFillBuffer",
+          "write_barriers = 0"},
+         [](Fixture& f) { return f.fillNgxShapeFill(0, VK_ACCESS_TRANSFER_WRITE_BIT, false); }},
+        {"buffer-fill-fill/ngx-shape-both-transfer-write", Expect::none, "record", false, {},
+         [](Fixture& f) {
+             return f.fillNgxShapeFill(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, true);
+         }},
         {"buffer-fill-submit/queue-order-only", Expect::waw, "submit", false,
          {"message_type = SubmitTimeError", "hazard_type = WRITE_AFTER_WRITE", "command = vkCmdFillBuffer",
           "prior_command = vkCmdFillBuffer"},
