@@ -17,6 +17,10 @@ The current release scope is incremental. The package and its ABI are tested sep
 
 Leonida and VIctory integration proposals are optional consumers. Neither is a release build dependency.
 
+## v0.4.0 experimental scope
+
+The [release notes](RELEASE_NOTES.md) record the portable core and independent Windows x64 D3D12FG, D3D12SR and VulkanSR profiles. Installed Vulkan FG and combined Vulkan SR → FG remain held by the open extended SyncVal gate in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). Installed D3D12 generated-frame presentation and combined operation remain under FL-15 and FL-16. The scope is source-only.
+
 ## GPU compatibility and memory
 
 Preserve previously verified RTX 20- and 30-series-compatible functionality on the documented device, driver and runtime combinations. The RTX 5090 is a development and stress-test platform. The RTX 2050 Laptop GPU with 4 GB VRAM remains the low-memory reference. Query native hardware and runtime capabilities before enabling optional features, including features specific to Blackwell, and retain ordinary rendering when a feature is unsupported or resources cannot be allocated. Record official NVIDIA support and tested experimental compatibility profiles separately. Make compatibility claims only for configurations supported by evidence. Preserve the installed public ABI and its versioned descriptors and verify existing consumers.

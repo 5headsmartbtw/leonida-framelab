@@ -28,6 +28,8 @@ On `VK_ERROR_DEVICE_LOST`, stop submissions and keep the device and runtime leas
 
 ## Reference validation
 
+The [v0.4.0 validation](RELEASE_NOTES.md) repeated the installed 120-evaluation, missing-depth and extended SyncVal runs in separate processes on the RTX 2050. The standard and fallback runs selected FIFO at 1280×720. The separate six-frame extended SR-only run reported zero validation errors and warnings.
+
 Build the [synthetic scene](../BUILD.md) separately with `FRAMELAB_USE_INSTALLED_VULKAN_SR=ON` and the installed package in `CMAKE_PREFIX_PATH`. Use `--verify-sdk-sr --validation` for the 120-frame case. Add `--frames 6 --sdk-sr-reject-frame 2` for a missing-depth fallback and reset test. Set `VK_VALIDATION_VALIDATE_SYNC=1` for the separate extended run.
 
 On RTX 2050 Laptop, Windows 11 build 26200, NVIDIA 617.14, Vulkan SDK 1.4.363.1 and Streamline 2.14.1, the installed client passed 120 evaluations from 640×360 to 1280×720 with 0 standard validation errors and warnings. The first and final full RGBA16F readbacks held finite, varying pixels. The final SHA-256 was `bdfdab96b1bc238f670e0ec109da9a45fd66c23003cdc0ec84be9e167e588f3a`. The six-frame missing-depth test accepted five frames, used one ordinary raster fallback, and observed two history resets with 0 validation errors and warnings. The separate six-frame control with SyncVal also reported 0 errors and warnings.

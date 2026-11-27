@@ -7,6 +7,8 @@ FrameLab provides an installable C ABI for temporal frame metadata, GPU resource
 
 The project grew out of research for [Leonida](docs/integrations/leonida/README.md). FrameLab builds and tests independently of downstream renderers. Integration with a GTA VI renderer remains research, and the SDK does not install game mods or establish game compatibility.
 
+[FrameLab SDK v0.4.0 release notes](docs/sdk/RELEASE_NOTES.md) cover the experimental package, verified hardware profiles and open gates.
+
 ## SDK and backend status
 
 | Capability | Status | Evidence and boundary |
@@ -15,7 +17,7 @@ The project grew out of research for [Leonida](docs/integrations/leonida/README.
 | SDK install and C/C++ consumers | Merged | Static/shared CMake packages and external consumers on Windows and Linux. [#7](https://github.com/5headsmartbtw/leonida-framelab/pull/7) |
 | Rust FFI | Merged | Raw bindings with C layout and installed shared-library lifecycle checks. [#11](https://github.com/5headsmartbtw/leonida-framelab/pull/11) |
 | D3D12 FG | Merged | Optional Windows x64 component. Native Direct NGX, verified readback and fence retirement. [#19](https://github.com/5headsmartbtw/leonida-framelab/pull/19) |
-| D3D12 SR | Planned | Optional installed component. [FL-14](https://github.com/5headsmartbtw/leonida-framelab/issues/29) |
+| D3D12 SR | Merged | Optional Windows x64 Direct NGX component with verified readback and real fence retirement. [D3D12SR](docs/sdk/D3D12_SR.md) · [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36) |
 | D3D12 generated-frame DXGI presentation | Planned for installed client | The [older standalone presenter](experiments/d3d12/README.md) verified real and generated Present. The installed client verified readback. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
 | D3D12 SR + FG | Planned | Depends on FL-14 and the presentation work in FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) |
 | Vulkan FG | Experimental · open draft | Legacy sample in main. Installed Direct NGX and readback verified in [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). Release blocked by [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
@@ -31,13 +33,13 @@ The project grew out of research for [Leonida](docs/integrations/leonida/README.
 flowchart TD
     A["Application or renderer"] --> B["FrameInputs and resource metadata"]
     B --> C{"Validate inputs and query capabilities"}
-    C -->|Supported profile| D["D3D12 or Vulkan component"]
+    C -->|Supported profile| D["D3D12FG, D3D12SR or VulkanSR"]
     D --> E["Native SR or FG evaluation"]
     E --> F["GPU completion and resource retirement"]
     F --> G["Application-owned presentation"]
     C -->|Rejected or unsupported| R["Ordinary rendering"]
     R --> G
-    P["Planned: D3D12 SR and SR + FG"] -.-> D
+    P["Planned: D3D12 presentation and combined SR + FG"] -.-> D
     X["Experimental: installed Vulkan FG and SR + FG"] -.-> D
 ```
 
@@ -47,9 +49,9 @@ The portable layer checks same-frame color, depth, motion vectors, camera/jitter
 
 | Device | Verified workload | Evidence |
 | --- | --- | --- |
-| RTX 2050 Laptop (4 GB) | Low-memory reference. Installed D3D12 FG readback and Vulkan SR. Standalone Vulkan handoff and additional Vulkan validation in open PRs. RTX 2050 FG used an experimental compatibility profile. | [D3D12 FG](docs/sdk/D3D12_FG.md) · [Vulkan SR](docs/sdk/VULKAN_SR.md) · [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12) · [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) |
+| RTX 2050 Laptop (4 GB) | Low-memory reference. Installed D3D12 FG, D3D12 SR and Vulkan SR readback. Standalone Vulkan handoff and additional Vulkan validation in open PRs. D3D12 SR used the official runtime. FG used the experimental SM86 profile. | [D3D12 FG](docs/sdk/D3D12_FG.md) · [D3D12 SR](docs/sdk/D3D12_SR.md) · [Vulkan SR](docs/sdk/VULKAN_SR.md) · [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12) · [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) |
 | RTX 4070 Ti SUPER | Standalone Vulkan handoff, all four scenarios. | [akimfomin's report](https://github.com/5headsmartbtw/leonida-framelab/pull/12#issuecomment-7142089405) |
-| RTX 5090 | Native Vulkan FG and generated-image readback from draft #20 with an official, unmodified NVIDIA runtime. SyncVal reproduced write-after-write diagnostics. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121) |
+| RTX 5090 | Official-runtime D3D12 SR readback and lifecycle tests in [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36). Native Vulkan FG and generated-image readback from draft #20 with an official, unmodified NVIDIA runtime. SyncVal reproduced write-after-write diagnostics. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121) |
 | Radeon 860M | Standalone Vulkan handoff, all four scenarios. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7147944059) |
 | Ryzen 9 9950X3D integrated Radeon graphics | Standalone Vulkan handoff, all four scenarios. | [JoeY54's report](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7153817545) |
 
@@ -115,7 +117,7 @@ find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED)
 target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 ```
 
-Point the consumer's `CMAKE_PREFIX_PATH` at the install prefix and include `<framelab/framelab.h>`. For a shared build, configure a separate build directory with `BUILD_SHARED_LIBS=ON`. The opt-in Windows x64 GPU modules use separately obtained dependencies. See [C/C++ installation and examples](docs/sdk/README.md), [D3D12FG](docs/sdk/D3D12_FG.md), [VulkanSR](docs/sdk/VULKAN_SR.md), [Rust FFI](bindings/rust/README.md) and [NVIDIA sample setup](docs/BUILD.md).
+Point the consumer's `CMAKE_PREFIX_PATH` at the install prefix and include `<framelab/framelab.h>`. For a shared build, configure a separate build directory with `BUILD_SHARED_LIBS=ON`. The opt-in Windows x64 GPU modules use separately obtained dependencies. See [C/C++ installation and examples](docs/sdk/README.md), [D3D12FG](docs/sdk/D3D12_FG.md), [D3D12SR](docs/sdk/D3D12_SR.md), [VulkanSR](docs/sdk/VULKAN_SR.md), [Rust FFI](bindings/rust/README.md) and [NVIDIA sample setup](docs/BUILD.md).
 
 ## Limits and release blockers
 
@@ -125,8 +127,8 @@ Point the consumer's `CMAKE_PREFIX_PATH` at the install prefix and include `<fra
 
 ## Roadmap and external renderers
 
-- D3D12 next steps are [installed SR (FL-14)](https://github.com/5headsmartbtw/leonida-framelab/issues/29), [installed-client DXGI presentation (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) and [combined SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
-- Vulkan priorities are [SyncVal root cause (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), review of queue and failure handling, and broader independent hardware validation. See the [roadmap](docs/ROADMAP.md) and [open stabilization proposal #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
+- D3D12 next steps are [installed-client DXGI presentation (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) and [combined SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
+- Vulkan priorities are [SyncVal root cause (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), review of queue and failure handling, and broader independent hardware validation. See the [roadmap](docs/ROADMAP.md) and [stabilization roadmap update #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - The local AMD FidelityFX Cauldron checkpoint linked the installed SDK, loaded its DLL, checked the ABI and continued standard Sponza rendering. A later standalone signed Streamline probe initialized the runtime and queried DLSS requirements. Native Cauldron SR and FG evaluation remain in development. The public integration proposal is in [#28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - Leonida and VIctory remain optional downstream integrations. See the [read-only integration notes](docs/integrations/leonida/README.md) and [VIctory audit](docs/integrations/victory/README.md).
 

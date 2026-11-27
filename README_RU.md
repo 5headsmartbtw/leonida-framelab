@@ -7,6 +7,8 @@ FrameLab предоставляет устанавливаемый C ABI для 
 
 Проект вырос из исследований для [Leonida](docs/integrations/leonida/README.md). FrameLab собирается и тестируется независимо от внешних рендереров. Интеграция с рендерером GTA VI остаётся исследовательской задачей. SDK не устанавливает моды и не подтверждает совместимость с игрой.
 
+[Примечания к выпуску FrameLab SDK v0.4.0](docs/sdk/RELEASE_NOTES.md) описывают экспериментальный пакет, проверенные конфигурации и открытые ограничения.
+
 ## Состояние SDK и компонентов
 
 | Возможность | Состояние | Проверки и границы |
@@ -15,7 +17,7 @@ FrameLab предоставляет устанавливаемый C ABI для 
 | Установка SDK и клиенты на C/C++ | В main | Статический и динамический пакеты CMake, внешние клиенты на Windows и Linux. [#7](https://github.com/5headsmartbtw/leonida-framelab/pull/7) |
 | Rust FFI | В main | Низкоуровневые привязки с проверкой раскладки C ABI и жизненного цикла установленной библиотеки. [#11](https://github.com/5headsmartbtw/leonida-framelab/pull/11) |
 | D3D12 FG | В main | Необязательный компонент Windows x64. Нативный Direct NGX, проверка изображения и освобождение по fence. [#19](https://github.com/5headsmartbtw/leonida-framelab/pull/19) |
-| D3D12 SR | Запланировано | Необязательный устанавливаемый компонент. [FL-14](https://github.com/5headsmartbtw/leonida-framelab/issues/29) |
+| D3D12 SR | В main | Необязательный компонент Direct NGX для Windows x64. Проверены чтение результата и освобождение ресурсов по fence. [D3D12SR](docs/sdk/D3D12_SR.md) · [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36) |
 | Вывод сгенерированных кадров через D3D12/DXGI | Запланировано для клиента SDK | [Ранний отдельный пример](experiments/d3d12/README.md) проверил Present обычных и сгенерированных кадров. Клиент установленного SDK проверил чтение изображения. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
 | D3D12 SR + FG | Запланировано | Зависит от FL-14 и вывода кадров из FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) |
 | Vulkan FG | Эксперимент · открытый черновик | Прежний пример есть в main. Установленный Direct NGX и чтение результата проверены в [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). Релиз блокирует [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
@@ -31,13 +33,13 @@ FrameLab предоставляет устанавливаемый C ABI для 
 flowchart TD
     A["Приложение или рендерер"] --> B["FrameInputs и метаданные ресурсов"]
     B --> C{"Проверка входов и возможностей"}
-    C -->|Поддерживаемый профиль| D["Компонент D3D12 или Vulkan"]
+    C -->|Поддерживаемый профиль| D["D3D12FG, D3D12SR или VulkanSR"]
     D --> E["Нативная обработка SR или FG"]
     E --> F["Завершение работы GPU и освобождение ресурсов"]
     F --> G["Вывод кадров приложением"]
     C -->|Отказ или нет поддержки| R["Обычный рендеринг"]
     R --> G
-    P["Планируется: D3D12 SR и SR + FG"] -.-> D
+    P["Планируется: вывод D3D12 и совместный SR + FG"] -.-> D
     X["Эксперимент: установленный Vulkan FG и SR + FG"] -.-> D
 ```
 
@@ -47,9 +49,9 @@ flowchart TD
 
 | Устройство | Проверенная нагрузка | Данные |
 | --- | --- | --- |
-| RTX 2050 Laptop (4 ГБ) | Эталон для ограниченной видеопамяти. Чтение результата установленного D3D12 FG, установленный Vulkan SR, отдельный тест передачи ресурсов и дополнительные проверки Vulkan в открытых PR. FG использовал экспериментальный профиль совместимости. | [D3D12 FG](docs/sdk/D3D12_FG.md) · [Vulkan SR](docs/sdk/VULKAN_SR.md) · [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12) · [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) |
+| RTX 2050 Laptop (4 ГБ) | Эталон для ограниченной видеопамяти. Чтение результата установленных D3D12 FG, D3D12 SR и Vulkan SR, отдельный тест передачи ресурсов и дополнительные проверки Vulkan в открытых PR. D3D12 SR использовал официальный runtime, FG — экспериментальный профиль SM86. | [D3D12 FG](docs/sdk/D3D12_FG.md) · [D3D12 SR](docs/sdk/D3D12_SR.md) · [Vulkan SR](docs/sdk/VULKAN_SR.md) · [#12](https://github.com/5headsmartbtw/leonida-framelab/pull/12) · [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) |
 | RTX 4070 Ti SUPER | Отдельный тест передачи ресурсов между очередями Vulkan, все четыре сценария. | [Отчёт akimfomin](https://github.com/5headsmartbtw/leonida-framelab/pull/12#issuecomment-7142089405) |
-| RTX 5090 | Нативный Vulkan FG и чтение сгенерированного изображения из черновика #20 с официальным неизменённым runtime NVIDIA. SyncVal воспроизвёл диагностику write-after-write. | [Отчёт JoeY54](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121) |
+| RTX 5090 | Чтение результата и проверки жизненного цикла D3D12 SR с официальным runtime в [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36). Нативный Vulkan FG и чтение сгенерированного изображения из черновика #20 с официальным неизменённым runtime NVIDIA. SyncVal воспроизвёл диагностику write-after-write. | [Отчёт JoeY54](https://github.com/5headsmartbtw/leonida-framelab/issues/24#issuecomment-7148188121) |
 | Radeon 860M | Отдельный тест передачи ресурсов между очередями Vulkan, все четыре сценария. | [Отчёт JoeY54](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7147944059) |
 | Встроенная графика Radeon в Ryzen 9 9950X3D | Отдельный тест передачи ресурсов между очередями Vulkan, все четыре сценария. | [Отчёт JoeY54](https://github.com/5headsmartbtw/leonida-framelab/issues/15#issuecomment-7153817545) |
 
@@ -115,7 +117,7 @@ find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED)
 target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 ```
 
-Укажите каталог установки в `CMAKE_PREFIX_PATH` внешнего проекта и подключите `<framelab/framelab.h>`. Для динамической библиотеки используйте отдельный каталог сборки с `BUILD_SHARED_LIBS=ON`. Необязательные GPU-компоненты Windows x64 требуют отдельно полученных зависимостей. См. [установку и примеры C/C++](docs/sdk/README.md), [D3D12FG](docs/sdk/D3D12_FG.md), [VulkanSR](docs/sdk/VULKAN_SR.md), [Rust FFI](bindings/rust/README.md) и [настройку примера NVIDIA](docs/BUILD.md).
+Укажите каталог установки в `CMAKE_PREFIX_PATH` внешнего проекта и подключите `<framelab/framelab.h>`. Для динамической библиотеки используйте отдельный каталог сборки с `BUILD_SHARED_LIBS=ON`. Необязательные GPU-компоненты Windows x64 требуют отдельно полученных зависимостей. См. [установку и примеры C/C++](docs/sdk/README.md), [D3D12FG](docs/sdk/D3D12_FG.md), [D3D12SR](docs/sdk/D3D12_SR.md), [VulkanSR](docs/sdk/VULKAN_SR.md), [Rust FFI](bindings/rust/README.md) и [настройку примера NVIDIA](docs/BUILD.md).
 
 ## Ограничения и блокирующие условия релиза
 
@@ -125,7 +127,7 @@ target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 
 ## План разработки и внешние рендереры
 
-- Следующие этапы D3D12 — [устанавливаемый SR (FL-14)](https://github.com/5headsmartbtw/leonida-framelab/issues/29), [вывод DXGI клиентом SDK (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) и [совместный SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
+- Следующие этапы D3D12 — [вывод DXGI клиентом SDK (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) и [совместный SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
 - Приоритеты Vulkan — [поиск причины SyncVal (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), ревью передачи ресурсов и обработки сбоев, а также независимые проверки на других GPU. См. [план разработки](docs/ROADMAP.md) и [открытое предложение по стабилизации #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - В локальном проекте на AMD FidelityFX Cauldron подключён установленный SDK, загружена DLL, проверен ABI и продолжен обычный рендеринг Sponza. Более поздняя отдельная проверка с подписанным Streamline инициализировала runtime и запросила требования DLSS. Нативные вызовы SR и FG внутри Cauldron остаются в разработке. Публичное предложение по интеграции описано в [#28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - Leonida и VIctory остаются необязательными внешними интеграциями. См. [аудит Leonida](docs/integrations/leonida/README.md) и [аудит VIctory](docs/integrations/victory/README.md).
