@@ -14,3 +14,9 @@ Use `-` for the third argument when your runtime supports the native profile wit
 Before the run, the program creates probe backends on the device: a config of the v0.4.0 size is accepted, the sizes around it are rejected, and invalid render extents are rejected. The first backend then records six frames. Frame 0 also checks that a wrong native state, a frame at another render extent and a depth resource of another size are rejected. The last submission is gated to check lease retention and that the busy backend cannot be destroyed. Afterwards the idle backend is destroyed and a second one is created at a different render extent; its first frame must carry a history reset. For every interpolated frame the program prints the rectangle's measured edges on the middle row next to the expected halfway position.
 
 The evidence directory receives the synthetic sixth-frame readback. The sample does not send frames to a display.
+
+[`tests/run_d3d12_fg_extent_checks.ps1`](../../tests/run_d3d12_fg_extent_checks.ps1) runs the program at equal extents, 960×540 and 640×360 in separate processes and writes a JSON summary with the readback hashes:
+
+```powershell
+& .\tests\run_d3d12_fg_extent_checks.ps1 -Executable .\build-client\Release\d3d12_fg.exe -RuntimeDirectory $runtimeDirectory
+```
