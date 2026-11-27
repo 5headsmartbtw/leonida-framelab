@@ -15,6 +15,9 @@ int main(){
     f=good;f.color.frameIndex=7;CHECK(validate(f).error==Error::sequence);
     f=good;f.motionVectors.extent.width--;CHECK(validate(f).error==Error::dimensions);
     f=good;f.depth.format=Format::rgba16_float;CHECK(validate(f).error==Error::image_semantics);
+    for(auto color:{Format::rgba8_unorm,Format::bgra8_unorm,Format::rgb10a2_unorm}){f=good;f.color.format=color;CHECK(validate(f));}
+    f=good;f.color.format=Format::r32_float;CHECK(validate(f).error==Error::image_semantics);
+    f=good;f.depth.format=Format::rgb10a2_unorm;CHECK(validate(f).error==Error::image_semantics);
     f=good;f.motionVectors.id=f.color.id;CHECK(validate(f).error==Error::image_semantics);
     f=good;f.color.state=State::unknown;CHECK(validate(f).error==Error::state);
     f=good;f.deviceLost=true;CHECK(validate(f).error==Error::device_lost);

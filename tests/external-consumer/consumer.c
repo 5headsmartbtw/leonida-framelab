@@ -53,6 +53,18 @@ int main(void)
     CHECK(framelab_fg_stream_create(FRAMELAB_ABI_VERSION, &stream) == FRAMELAB_OK);
     CHECK(framelab_lease_create(&image_releases, release, &image) == FRAMELAB_OK);
     CHECK(framelab_lease_create(&signal_releases, release, &signal) == FRAMELAB_OK);
+    {
+        /* The core decodes every public color format, including RGB10A2; 10 is unknown. */
+        FrameLabFgStream* probe = NULL;
+        FrameLabFgFrame g = make_frame(image, signal);
+        CHECK(framelab_fg_stream_create(FRAMELAB_ABI_VERSION, &probe) == FRAMELAB_OK);
+        g.color.format = FRAMELAB_FORMAT_RGB10A2_UNORM;
+        CHECK(framelab_fg_prepare(probe, &g) == FRAMELAB_OK);
+        CHECK(framelab_fg_cancel(probe) == FRAMELAB_OK);
+        g.color.format = FRAMELAB_FORMAT_RGB10A2_UNORM + 1;
+        CHECK(framelab_fg_prepare(probe, &g) == FRAMELAB_INVALID_IMAGE_DESCRIPTION);
+        CHECK(framelab_fg_stream_destroy(probe) == FRAMELAB_OK);
+    }
     FrameLabFgFrame f = make_frame(image, signal);
     f.struct_size--;
     CHECK(framelab_fg_prepare(stream, &f) == FRAMELAB_ABI_MISMATCH);

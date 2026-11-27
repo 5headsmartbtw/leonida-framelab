@@ -19,6 +19,9 @@ int main(){unsigned checks=0;VulkanFrameInputs b;b.frame=test_fixture::valid();b
     bad=b;bad.deviceId=7;CHECK(!valid(bad));bad=b;bad.depth.aspects|=VK_IMAGE_ASPECT_STENCIL_BIT;CHECK(!valid(bad));
     bad=b;bad.depth.image=bad.color.image;CHECK(!valid(bad));bad=b;bad.frame.hudless=bad.frame.color;CHECK(valid(bad).error==Error::unsupported);
     bad=b;bad.depth.extent.width=640;CHECK(!valid(bad));
+    // RGB10A2 is a neutral color format but not part of the Vulkan Direct NGX profile.
+    bad=b;bad.frame.color.format=Format::rgb10a2_unorm;CHECK(!valid(bad));
+    bad.color.format=VK_FORMAT_A2B10G10R10_UNORM_PACK32;CHECK(!valid(bad));
     bad=b;bad.frame.camera.projectionSpace=ClipSpace::y_up_zero_to_one;CHECK(valid(bad).error==Error::unsupported);
     std::cout<<"PASS Vulkan binding checks="<<checks<<'\n';return 0;
 }

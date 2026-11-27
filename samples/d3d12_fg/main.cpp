@@ -5,11 +5,13 @@
 
 #include <DirectXMath.h>
 #include <DirectXPackedVector.h>
+#include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +30,76 @@ constexpr unsigned recreatedFrames = 3;
 constexpr uint32_t sentinel = 0xffff00ff;
 
 bool operator==(FrameLabExtent a, FrameLabExtent b) { return a.width == b.width && a.height == b.height; }
+
+// The color and generated-image format of a run. Every format here has four-byte texels.
+struct ColorMode {
+    const wchar_t* name;
+    uint32_t format; // FRAMELAB_FORMAT_*
+    DXGI_FORMAT dxgi;
+    bool hdr10;
+};
+constexpr ColorMode colorModes[] = {
+    {L"rgba8", FRAMELAB_FORMAT_RGBA8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, false},
+    {L"bgra8", FRAMELAB_FORMAT_BGRA8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, false},
+    {L"rgb10a2", FRAMELAB_FORMAT_RGB10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, false},
+    {L"hdr10", FRAMELAB_FORMAT_RGB10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, true},
+};
+
+// HDR10: sRGB-encoded SDR colors shown at the BT.2408 reference white of 203 cd/m², converted
+// from BT.709 to BT.2020 primaries (BT.2087) and PQ-encoded (SMPTE ST 2084), 10-bit full range.
+float pq(float nits)
+{
+    constexpr float m1 = 2610.f / 16384, m2 = 2523.f / 4096 * 128, c1 = 3424.f / 4096,
+        c2 = 2413.f / 4096 * 32, c3 = 2392.f / 4096 * 32;
+    const float y = std::pow(std::clamp(nits / 10000.f, 0.f, 1.f), m1);
+    return std::pow((c1 + c2 * y) / (1 + c3 * y), m2);
+}
+
+float linear(uint32_t srgb8)
+{
+    const float c = srgb8 / 255.f;
+    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+uint32_t ten(float value) { return uint32_t(std::lround(std::clamp(value, 0.f, 1.f) * 1023)); }
+
+// Encodes an 8-bit sRGB color (r, g, b) as one opaque texel of the mode's format.
+uint32_t encode(const ColorMode& mode, uint32_t r, uint32_t g, uint32_t b)
+{
+    if (mode.dxgi == DXGI_FORMAT_R8G8B8A8_UNORM) return 0xff000000u | b << 16 | g << 8 | r;
+    if (mode.dxgi == DXGI_FORMAT_B8G8R8A8_UNORM) return 0xff000000u | r << 16 | g << 8 | b;
+    float rgb[3]{r / 255.f, g / 255.f, b / 255.f};
+    if (mode.hdr10) {
+        constexpr float toBt2020[3][3]{{0.6274f, 0.3293f, 0.0433f}, {0.0691f, 0.9195f, 0.0114f},
+                                       {0.0164f, 0.0880f, 0.8956f}};
+        const float in[3]{linear(r) * 203, linear(g) * 203, linear(b) * 203};
+        for (unsigned i = 0; i < 3; ++i)
+            rgb[i] = pq(toBt2020[i][0] * in[0] + toBt2020[i][1] * in[1] + toBt2020[i][2] * in[2]);
+    }
+    return 3u << 30 | ten(rgb[2]) << 20 | ten(rgb[1]) << 10 | ten(rgb[0]);
+}
+
+// Red and blue channel codes of a texel; `max` is the channel's largest code.
+void redBlue(const ColorMode& mode, uint32_t texel, int& red, int& blue)
+{
+    if (mode.dxgi == DXGI_FORMAT_R8G8B8A8_UNORM) {
+        red = texel & 0xff;
+        blue = (texel >> 16) & 0xff;
+    } else if (mode.dxgi == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        red = (texel >> 16) & 0xff;
+        blue = texel & 0xff;
+    } else {
+        red = texel & 0x3ff;
+        blue = (texel >> 20) & 0x3ff;
+    }
+}
+
+const ColorMode* parseColor(const wchar_t* text)
+{
+    for (const auto& mode : colorModes)
+        if (std::wcscmp(text, mode.name) == 0) return &mode;
+    return nullptr;
+}
 
 void check(HRESULT result, const char* step)
 {
@@ -65,14 +137,24 @@ struct Gpu {
     ComPtr<ID3D12GraphicsCommandList> list;
     ComPtr<ID3D12Fence> fence;
     std::vector<ComPtr<ID3D12Resource>> uploads;
+    ComPtr<ID3D12InfoQueue> messages; // Set when the debug layer is enabled.
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     uint64_t signal = 0;
 
     ~Gpu() { if (event) CloseHandle(event); }
 
-    void initialize()
+    // With `validate`, the D3D12 debug layer and GPU-based validation are enabled before the
+    // device is created, and every message is kept for writeMessages().
+    void initialize(bool validate)
     {
         expect(event != nullptr, "create fence event");
+        if (validate) {
+            ComPtr<ID3D12Debug1> layer;
+            check(D3D12GetDebugInterface(IID_PPV_ARGS(&layer)), "enable the D3D12 debug layer (Graphics Tools)");
+            layer->EnableDebugLayer();
+            layer->SetEnableGPUBasedValidation(TRUE);
+            layer->SetEnableSynchronizedCommandQueueValidation(TRUE);
+        }
         ComPtr<IDXGIFactory1> factory;
         check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "create DXGI factory");
         for (UINT i = 0; ; ++i) {
@@ -89,6 +171,10 @@ struct Gpu {
             }
         }
         expect(device.Get() != nullptr, "NVIDIA D3D12 device unavailable");
+        if (validate) {
+            check(device.As(&messages), "query the D3D12 info queue");
+            check(messages->SetMessageCountLimit(UINT64(-1)), "keep every D3D12 debug message");
+        }
         D3D12_COMMAND_QUEUE_DESC desc{};
         desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         check(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&queue)), "create queue");
@@ -96,6 +182,34 @@ struct Gpu {
         check(device->CreateCommandList(0, desc.Type, allocator.Get(), nullptr, IID_PPV_ARGS(&list)), "create list");
         check(list->Close(), "close initial list");
         check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)), "create completion fence");
+    }
+
+    // Writes the stored debug-layer messages to `path`, one per line (severity, ID, text), and
+    // prints a count per severity. FrameLab and NGX share the device, so a message may come from
+    // either.
+    void writeMessages(const std::filesystem::path& path)
+    {
+        if (!messages) return;
+        FILE* file = _wfopen(path.c_str(), L"w");
+        expect(file != nullptr, "open D3D12 debug message log");
+        unsigned counts[5]{};
+        const auto stored = messages->GetNumStoredMessages();
+        for (UINT64 i = 0; i < stored; ++i) {
+            SIZE_T length = 0;
+            if (FAILED(messages->GetMessage(i, nullptr, &length)) || !length) continue;
+            std::vector<char> storage(length);
+            auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+            if (FAILED(messages->GetMessage(i, message, &length))) continue;
+            if (unsigned(message->Severity) < 5) ++counts[message->Severity];
+            std::fprintf(file, "%d %d %s\n", int(message->Severity), int(message->ID), message->pDescription);
+        }
+        std::fclose(file);
+        std::printf("SDK_FG_DEBUG corruption=%u error=%u warning=%u info=%u message=%u discarded=%llu\n",
+                    counts[D3D12_MESSAGE_SEVERITY_CORRUPTION], counts[D3D12_MESSAGE_SEVERITY_ERROR],
+                    counts[D3D12_MESSAGE_SEVERITY_WARNING], counts[D3D12_MESSAGE_SEVERITY_INFO],
+                    counts[D3D12_MESSAGE_SEVERITY_MESSAGE],
+                    static_cast<unsigned long long>(messages->GetNumMessagesDiscardedByMessageCountLimit()));
+        messages->ClearStoredMessages();
     }
 
     void begin()
@@ -273,17 +387,20 @@ void writeReadback(const std::filesystem::path& path, const std::vector<uint32_t
     expect(written == image.size() && closed == 0, "write synthetic image output");
 }
 
-// A moving rectangle over a checkerboard. Color is drawn at the output extent; depth and motion
-// vectors sample the same scene at the render extent. With equal extents this is the original
-// synthetic input. Motion is in UV units, so its value does not depend on the extent.
+// A moving orange rectangle over a grey checkerboard. Color is drawn at the output extent in the
+// run's format; depth and motion vectors sample the same scene at the render extent. With equal
+// extents and RGBA8 this is the original synthetic input. Motion is in UV units, so its value does
+// not depend on the extent.
 struct Scene {
     FrameLabExtent render;
+    uint32_t rectangle, light, dark;
     std::vector<uint32_t> pixels;
     std::vector<float> depths;
     std::vector<uint16_t> vectors;
 
-    explicit Scene(FrameLabExtent renderExtent)
-        : render(renderExtent), pixels(size_t(outputExtent.width) * outputExtent.height),
+    Scene(FrameLabExtent renderExtent, const ColorMode& mode)
+        : render(renderExtent), rectangle(encode(mode, 0xf0, 0x80, 0x20)), light(encode(mode, 0x30, 0x30, 0x30)),
+          dark(encode(mode, 0x18, 0x18, 0x18)), pixels(size_t(outputExtent.width) * outputExtent.height),
           depths(size_t(renderExtent.width) * renderExtent.height), vectors(depths.size() * 2) {}
 
     static unsigned left(unsigned frame) { return 160 + frame * 32; }
@@ -296,8 +413,8 @@ struct Scene {
     {
         for (unsigned y = 0; y < outputExtent.height; ++y)
             for (unsigned x = 0; x < outputExtent.width; ++x)
-                pixels[size_t(y) * outputExtent.width + x] = object(x, y, frame) ? 0xff2080f0 :
-                    (((x / 32 + y / 32) % 2) ? 0xff303030 : 0xff181818);
+                pixels[size_t(y) * outputExtent.width + x] = object(x, y, frame) ? rectangle :
+                    (((x / 32 + y / 32) % 2) ? light : dark);
         const auto motion = DirectX::PackedVector::XMConvertFloatToHalf(-32.0f / outputExtent.width);
         for (unsigned y = 0; y < render.height; ++y) {
             const auto oy = unsigned((y + 0.5) * outputExtent.height / render.height);
@@ -314,14 +431,19 @@ struct Scene {
 };
 
 // Left and right edges of the rectangle on the middle row of a readback, or -1 if absent. The
-// rectangle is orange; the checkerboard is grey.
-void edges(const std::vector<uint32_t>& image, int& left, int& right)
+// rectangle is orange; the checkerboard is grey. A texel counts as rectangle when red exceeds blue
+// by 0x60/0xd0 of the rectangle's own difference: 0x60 in 8-bit RGBA8, as before.
+void edges(const ColorMode& mode, uint32_t rectangle, const std::vector<uint32_t>& image, int& left, int& right)
 {
     left = right = -1;
+    int rectangleRed = 0, rectangleBlue = 0;
+    redBlue(mode, rectangle, rectangleRed, rectangleBlue);
+    const int threshold = (rectangleRed - rectangleBlue) * 0x60 / 0xd0;
     const auto* row = image.data() + size_t(outputExtent.height / 2) * outputExtent.width;
     for (unsigned x = 0; x < outputExtent.width; ++x) {
-        const int red = row[x] & 0xff, blue = (row[x] >> 16) & 0xff;
-        if (red - blue < 0x60) continue;
+        int red = 0, blue = 0;
+        redBlue(mode, row[x], red, blue);
+        if (red - blue < threshold) continue;
         if (left < 0) left = int(x);
         right = int(x) + 1;
     }
@@ -335,24 +457,61 @@ FrameLabStatus tryCreate(FrameLabD3D12FgConfig config)
     return status;
 }
 
-// Descriptor sizes and render extents, checked against the real device before the run.
+// sizeof an older FrameLabD3D12FgConfig layout: its fields rounded up to the struct alignment.
+constexpr uint32_t layoutSize(size_t fields)
+{
+    constexpr size_t align = alignof(FrameLabD3D12FgConfig);
+    return uint32_t((fields + align - 1) / align * align);
+}
+
+// Descriptor sizes, render extents and color configurations, checked against the real device
+// before the run.
 void descriptorChecks(const FrameLabD3D12FgConfig& base)
 {
-    constexpr uint32_t align = alignof(FrameLabD3D12FgConfig);
-    constexpr uint32_t v1 = (uint32_t(offsetof(FrameLabD3D12FgConfig, render_extent)) + align - 1) / align * align;
+    constexpr uint32_t v1 = layoutSize(offsetof(FrameLabD3D12FgConfig, render_extent));
+    constexpr uint32_t extentSize = layoutSize(offsetof(FrameLabD3D12FgConfig, color_format));
     auto config = base;
     config.struct_size = v1;
     // A v0.4.0 client passes the v1 size. The bytes after it are not part of its struct, so the
-    // invalid extent placed there must not be read.
+    // invalid extent and color values placed there must not be read.
     config.render_extent = {1, 0};
+    config.color_format = FRAMELAB_FORMAT_RGBA16_FLOAT;
+    config.flags = ~0u;
     expect(tryCreate(config) == FRAMELAB_OK, "v0.4.0-size config was not accepted");
     std::printf("ABI_CHECK v1_size=%u created=1\n", v1);
+    // A client of the render_extent header passes that size; its render extent is read, the color
+    // fields after it are not.
+    config.struct_size = extentSize;
+    config.render_extent = base.render_extent;
+    expect(tryCreate(config) == FRAMELAB_OK, "render_extent-size config was not accepted");
+    std::printf("ABI_CHECK extent_size=%u created=1\n", extentSize);
     for (uint32_t size = v1 - 1; size < sizeof config; ++size) {
-        if (size == v1) continue;
+        if (size == v1 || size == extentSize) continue;
         config.struct_size = size;
         expect(tryCreate(config) == FRAMELAB_ABI_MISMATCH, "partial config size was not rejected");
     }
     std::puts("ABI_CHECK partial_sizes_rejected=1");
+    // Color format and flag combinations that create rejects before initializing NGX.
+    struct Combination { uint32_t format, flags; FrameLabStatus expected; };
+    constexpr Combination invalid[]{
+        {FRAMELAB_FORMAT_RGBA16_FLOAT, 0, FRAMELAB_UNSUPPORTED},
+        {0, FRAMELAB_D3D12_FG_HDR10, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_RGBA8_UNORM, FRAMELAB_D3D12_FG_HDR10, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_BGRA8_UNORM, FRAMELAB_D3D12_FG_HDR10, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_RGBA16_FLOAT, FRAMELAB_D3D12_FG_HDR10, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_R32_FLOAT, 0, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_D24S8, 0, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_RGB10A2_UNORM + 1, 0, FRAMELAB_INVALID_ARGUMENT},
+        {FRAMELAB_FORMAT_RGB10A2_UNORM, 2, FRAMELAB_INVALID_ARGUMENT},
+        {0, 0x80000000u, FRAMELAB_INVALID_ARGUMENT},
+    };
+    config = base;
+    for (const auto& combination : invalid) {
+        config.color_format = combination.format;
+        config.flags = combination.flags;
+        expect(tryCreate(config) == combination.expected, "invalid color configuration was not rejected");
+    }
+    std::puts("ABI_CHECK invalid_color_configs_rejected=1");
     config = base;
     const auto w = base.extent.width, h = base.extent.height;
     for (const FrameLabExtent bad : {FrameLabExtent{w, 0}, FrameLabExtent{0, h},
@@ -372,7 +531,7 @@ struct RunResult {
 
 // Initializes the backend, then records, submits and retires `count` frames. The full run adds the
 // rejection, retention and destruction checks; a recreated backend checks that it needs a reset.
-RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, FrameLabExtent render, unsigned count, bool full)
+RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, const ColorMode& mode, FrameLabExtent render, unsigned count, bool full)
 {
     const auto recorded = [&](FrameLabStatus result, const char* step) {
         if (result == FRAMELAB_OK) return;
@@ -388,17 +547,17 @@ RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, FrameLabExtent render, unsigned co
     sdk(framelab_d3d12_fg_retire(raw), "retire native FG create");
 
     RunResult result;
-    auto color = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM, outputExtent);
+    auto color = gpu.texture(mode.dxgi, outputExtent);
     auto depth = gpu.texture(DXGI_FORMAT_R32_FLOAT, render);
     auto motion = gpu.texture(DXGI_FORMAT_R16G16_FLOAT, render);
-    auto generated = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM, outputExtent);
+    auto generated = gpu.texture(mode.dxgi, outputExtent);
     auto colorLease = pin(color, result.releases);
     auto depthLease = pin(depth, result.releases);
     auto motionLease = pin(motion, result.releases);
     const size_t count2d = size_t(outputExtent.width) * outputExtent.height;
     std::vector<uint32_t> previous, clear(count2d, sentinel);
     result.output.resize(count2d);
-    Scene scene(render);
+    Scene scene(render, mode);
     const auto view = camera();
     auto time = std::chrono::steady_clock::now();
     for (unsigned i = 0; i < count; ++i) {
@@ -423,7 +582,7 @@ RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, FrameLabExtent render, unsigned co
         frame.reset_history = i ? 0 : FRAMELAB_RESET_INITIAL;
         frame.camera = view;
         frame.producer = {1, i + 1u, 0, 0, FRAMELAB_COMPLETION_SAME_COMMAND_STREAM, nullptr};
-        frame.color = {11, i, 1, outputExtent, FRAMELAB_FORMAT_RGBA8_UNORM,
+        frame.color = {11, i, 1, outputExtent, mode.format,
                        FRAMELAB_STATE_SHADER_READ, FRAMELAB_PROVENANCE_SYNTHETIC, colorLease.get()};
         frame.depth = {12, i, 1, render, FRAMELAB_FORMAT_R32_FLOAT,
                        FRAMELAB_STATE_SHADER_READ, FRAMELAB_PROVENANCE_SYNTHETIC, depthLease.get()};
@@ -467,6 +626,44 @@ RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, FrameLabExtent render, unsigned co
                    "native depth of another size was not rejected");
             std::puts("ABI_CHECK native_extent_mismatch_rejected=1");
             gpu.uploads.push_back(wrongDepth.resource);
+
+            // Frame metadata in a color format other than the configured one, including FP16.
+            auto otherFormat = frame;
+            otherFormat.color.format = mode.format == FRAMELAB_FORMAT_RGBA8_UNORM ?
+                FRAMELAB_FORMAT_BGRA8_UNORM : FRAMELAB_FORMAT_RGBA8_UNORM;
+            expect(framelab_d3d12_fg_record(raw, &otherFormat, &bindings) == FRAMELAB_INVALID_IMAGE_DESCRIPTION,
+                   "frame in another color format was not rejected");
+            std::puts("ABI_CHECK color_format_mismatch_rejected=1");
+            otherFormat.color.format = FRAMELAB_FORMAT_RGBA16_FLOAT;
+            expect(framelab_d3d12_fg_record(raw, &otherFormat, &bindings) == FRAMELAB_INVALID_IMAGE_DESCRIPTION,
+                   "FP16 color frame was not rejected");
+            std::puts("ABI_CHECK fp16_frame_rejected=1");
+
+            // Correct metadata, but the native color input or the generated image has another
+            // format.
+            const auto otherDxgi = mode.dxgi == DXGI_FORMAT_R8G8B8A8_UNORM ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                                                                            DXGI_FORMAT_R8G8B8A8_UNORM;
+            std::vector<uint32_t> zeros4(size_t(outputExtent.width) * outputExtent.height);
+            unsigned otherReleases = 0;
+            auto otherColor = gpu.texture(otherDxgi, outputExtent);
+            gpu.upload(otherColor, zeros4.data(), shader);
+            auto otherLease = pin(otherColor, otherReleases);
+            auto otherColorFrame = frame;
+            otherColorFrame.color.lease = otherLease.get();
+            auto otherColorBindings = bindings;
+            otherColorBindings.color = {11, otherColor.resource.Get(), static_cast<uint32_t>(otherColor.state)};
+            expect(framelab_d3d12_fg_record(raw, &otherColorFrame, &otherColorBindings) == FRAMELAB_INVALID_RESOURCE_STATE,
+                   "native color in another format was not rejected");
+            std::puts("ABI_CHECK native_color_format_mismatch_rejected=1");
+            auto otherOutput = gpu.texture(otherDxgi, outputExtent);
+            gpu.upload(otherOutput, zeros4.data(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            auto otherOutputBindings = bindings;
+            otherOutputBindings.generated = {14, otherOutput.resource.Get(), static_cast<uint32_t>(otherOutput.state)};
+            expect(framelab_d3d12_fg_record(raw, &frame, &otherOutputBindings) == FRAMELAB_INVALID_RESOURCE_STATE,
+                   "generated image in another format was not rejected");
+            std::puts("ABI_CHECK native_output_format_mismatch_rejected=1");
+            gpu.uploads.push_back(otherColor.resource);
+            gpu.uploads.push_back(otherOutput.resource);
         }
         if (!full && i == 0) {
             auto unreset = frame;
@@ -522,7 +719,7 @@ RunResult run(Gpu& gpu, FrameLabD3D12Fg* raw, FrameLabExtent render, unsigned co
         // The generated frame lies between frames i - 1 and i, so the rectangle is expected
         // halfway, 16 output pixels left of its position in frame i.
         int left = -1, right = -1;
-        edges(result.output, left, right);
+        edges(mode, scene.rectangle, result.output, left, right);
         const int expectedLeft = int(Scene::left(i)) - 16;
         if (interpolated) {
             const int error = left < 0 ? int(outputExtent.width) :
@@ -557,16 +754,35 @@ bool parseExtent(const wchar_t* text, FrameLabExtent& extent)
 int wmain(int argc, wchar_t** argv)
 {
     FrameLabExtent render = outputExtent;
-    const bool renderArgument = argc == 6 && std::wcscmp(argv[4], L"--render") == 0;
-    if ((argc != 4 && !renderArgument) || (renderArgument && !parseExtent(argv[5], render))) {
+    const ColorMode* mode = &colorModes[0];
+    bool validate = false;
+    bool usage = argc < 4;
+    for (int i = 4; !usage && i < argc; i += 2) {
+        if (std::wcscmp(argv[i], L"--debug-layer") == 0) {
+            validate = true;
+            --i; // No value.
+        } else if (i + 1 >= argc) {
+            usage = true;
+        } else if (std::wcscmp(argv[i], L"--render") == 0) {
+            usage = !parseExtent(argv[i + 1], render);
+        } else if (std::wcscmp(argv[i], L"--color") == 0) {
+            usage = !(mode = parseColor(argv[i + 1]));
+        } else {
+            usage = true;
+        }
+    }
+    if (usage) {
         std::fprintf(stderr, "usage: d3d12_fg <NGX runtime directory> <output directory> <app-local proxy or -> "
-                             "[--render <width>x<height>, at most 1280x720]\n");
+                             "[--render <width>x<height>, at most 1280x720] [--color rgba8|bgra8|rgb10a2|hdr10] "
+                             "[--debug-layer]\n");
         return 2;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    Gpu gpu;
+    std::filesystem::path logs;
     try {
         const auto runtime = std::filesystem::absolute(argv[1]);
-        const auto logs = std::filesystem::absolute(argv[2]);
+        logs = std::filesystem::absolute(argv[2]);
         std::filesystem::create_directories(logs);
         expect(SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS) != 0,
                "set app-local DLL search policy");
@@ -575,20 +791,37 @@ int wmain(int argc, wchar_t** argv)
             const auto proxy = std::filesystem::absolute(argv[3]);
             expect(LoadLibraryW(proxy.c_str()) != nullptr, "load configured app-local proxy");
         }
-        Gpu gpu;
-        gpu.initialize();
+        gpu.initialize(validate);
         std::printf("SDK_FG_EXTENTS output=%ux%u render=%ux%u\n", outputExtent.width, outputExtent.height,
                     render.width, render.height);
+        std::printf("SDK_FG_VALIDATION debug_layer=%d gpu_based=%d\n", int(validate), int(validate));
+        // FrameLab needs the color format to be loadable, sampleable and a typed UAV store target.
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT support{mode->dxgi};
+        check(gpu.device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof support),
+              "query color format support");
+        constexpr auto required1 = D3D12_FORMAT_SUPPORT1_TEXTURE2D | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+            D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW;
+        const bool supported = (support.Support1 & required1) == required1 &&
+            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+        std::printf("SDK_FG_COLOR mode=%ls format=%u dxgi=%u hdr10=%d device_support=%d\n", mode->name,
+                    mode->format, unsigned(mode->dxgi), int(mode->hdr10), int(supported));
         FrameLabD3D12FgConfig config{sizeof config, FRAMELAB_ABI_VERSION, 1, 1,
             gpu.device.Get(), gpu.queue.Get(), gpu.fence.Get(), outputExtent,
             "31246941-7a24-484c-a4a7-e436c26c6f95", "phase2.1", runtime.c_str(), logs.c_str(), reportInit, nullptr,
-            render};
+            render, mode->format, mode->hdr10 ? uint32_t(FRAMELAB_D3D12_FG_HDR10) : 0u};
+        if (!supported) {
+            // The device cannot run this format: create must refuse it, and the host falls back.
+            expect(tryCreate(config) == FRAMELAB_UNSUPPORTED, "unsupported color format was not rejected");
+            std::puts("ABI_CHECK unsupported_color_rejected=1");
+            gpu.writeMessages(logs / L"d3d12-debug.log");
+            return 3;
+        }
         descriptorChecks(config);
 
         FrameLabD3D12Fg* raw{};
         sdk(framelab_d3d12_fg_create(&config, &raw), "initialize NGX and query native FG support");
         std::unique_ptr<FrameLabD3D12Fg, decltype(&framelab_d3d12_fg_destroy)> fg(raw, &framelab_d3d12_fg_destroy);
-        const auto first = run(gpu, raw, render, frames, true);
+        const auto first = run(gpu, raw, *mode, render, frames, true);
         writeReadback(logs / L"generated-5.rgba", first.output);
         std::printf("SDK_FG_SUMMARY real_frames=%u verified=%u final_lease_releases=%u max_edge_error=%d\n",
                     frames, first.verified, first.releases, first.maxEdgeError);
@@ -600,14 +833,21 @@ int wmain(int argc, wchar_t** argv)
             FrameLabExtent{outputExtent.width * 3 / 4, outputExtent.height * 3 / 4} : outputExtent;
         sdk(framelab_d3d12_fg_create(&config, &raw), "recreate backend at another render extent");
         fg.reset(raw);
-        const auto second = run(gpu, raw, config.render_extent, recreatedFrames, false);
+        const auto second = run(gpu, raw, *mode, config.render_extent, recreatedFrames, false);
         std::printf("SDK_FG_RECREATED render=%ux%u real_frames=%u verified=%u final_lease_releases=%u max_edge_error=%d\n",
                     config.render_extent.width, config.render_extent.height, recreatedFrames, second.verified,
                     second.releases, second.maxEdgeError);
+        // Destroy the backend first, so the log also covers NGX feature release and shutdown.
+        fg.reset();
+        gpu.writeMessages(logs / L"d3d12-debug.log");
         return first.verified == frames - 1 && first.releases == 3 &&
             second.verified == recreatedFrames - 1 && second.releases == 3 ? 0 : 1;
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "D3D12 public SDK test: %s\n", ex.what());
+        try {
+            if (!logs.empty()) gpu.writeMessages(logs / L"d3d12-debug.log");
+        } catch (const std::exception&) {
+        }
         return 1;
     }
 }

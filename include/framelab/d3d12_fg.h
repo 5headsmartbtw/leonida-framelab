@@ -13,6 +13,13 @@ extern "C" {
 typedef struct FrameLabD3D12Fg FrameLabD3D12Fg;
 typedef void (FRAMELAB_CALL *FrameLabD3D12InitReportFn)(void* user, const char* operation, uint32_t ngx_result);
 
+/* FrameLabD3D12FgConfig.flags */
+enum {
+    /* Color is HDR10: BT.2100 PQ-encoded BT.2020 RGB. Requires FRAMELAB_FORMAT_RGB10A2_UNORM.
+     * FrameLab passes the frames through without tone mapping. */
+    FRAMELAB_D3D12_FG_HDR10 = 1
+};
+
 typedef struct FrameLabD3D12FgConfig {
     uint32_t struct_size, abi_version;
     uint64_t device_id, queue_id;
@@ -30,10 +37,19 @@ typedef struct FrameLabD3D12FgConfig {
      * color and the generated image use `extent`. Both dimensions zero select `extent`; one zero
      * dimension or a dimension above `extent` returns FRAMELAB_INVALID_DIMENSIONS. A client built
      * against the v0.4.0 header passes that struct's size (104 bytes on x64) and is accepted
-     * without this field being read; any size between that and sizeof returns
-     * FRAMELAB_ABI_MISMATCH. A v0.4.0 library rejects the new size, so a different render extent
-     * needs this library. */
+     * without this field being read. Any size other than a published layout's size or at least
+     * sizeof returns FRAMELAB_ABI_MISMATCH. A v0.4.0 library rejects the new sizes, so a different
+     * render extent needs this library. */
     FrameLabExtent render_extent;
+    /* Appended after render_extent (ABI version unchanged). The color and generated images use
+     * color_format: 0 or FRAMELAB_FORMAT_RGBA8_UNORM, FRAMELAB_FORMAT_BGRA8_UNORM or
+     * FRAMELAB_FORMAT_RGB10A2_UNORM. FRAMELAB_FORMAT_RGBA16_FLOAT returns FRAMELAB_UNSUPPORTED;
+     * any other value, an unknown flag, or HDR10 without RGB10A2 returns FRAMELAB_INVALID_ARGUMENT.
+     * A format the device cannot load, sample and store as a typed UAV returns FRAMELAB_UNSUPPORTED.
+     * A client built against the header that ends at render_extent passes that struct's size
+     * (112 bytes on x64) and gets RGBA8 without these fields being read. */
+    uint32_t color_format;
+    uint32_t flags; /* FRAMELAB_D3D12_FG_* */
 } FrameLabD3D12FgConfig;
 
 typedef struct FrameLabD3D12FgImage {
