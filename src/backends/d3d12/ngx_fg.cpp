@@ -10,7 +10,6 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_helpers_dlssg_d3d.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -110,17 +109,26 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     if (!out) return FRAMELAB_INVALID_ARGUMENT;
     *out = nullptr;
     if (!config) return FRAMELAB_INVALID_ARGUMENT;
-    // Callers built before render_extent was appended pass the shorter v1 layout.
-    constexpr auto v1Size = offsetof(FrameLabD3D12FgConfig, render_extent);
-    if (config->struct_size < v1Size || config->abi_version != FRAMELAB_ABI_VERSION)
+    // A client built against the v0.4.0 header passes that struct's size: the v1 fields rounded up
+    // to the struct alignment (104 bytes on x64). Its render extent is the output extent.
+    // render_extent is read only when the whole field is present. Sizes between the two layouts
+    // are rejected, and nothing past the caller's struct_size is read.
+    constexpr size_t v1Fields = offsetof(FrameLabD3D12FgConfig, render_extent);
+    constexpr size_t align = alignof(FrameLabD3D12FgConfig);
+    constexpr size_t v1Size = (v1Fields + align - 1) / align * align;
+    static_assert(v1Size < sizeof(FrameLabD3D12FgConfig), "render_extent extends the v1 layout");
+    const size_t size = config->struct_size;
+    if (config->abi_version != FRAMELAB_ABI_VERSION || (size != v1Size && size < sizeof *config))
         return FRAMELAB_ABI_MISMATCH;
     FrameLabD3D12FgConfig c{};
-    std::memcpy(&c, config, std::min<size_t>(config->struct_size, sizeof c));
+    std::memcpy(&c, config, size == v1Size ? v1Fields : sizeof c);
     if (!c.device || !c.queue || !c.completion_fence || !c.device_id || !c.queue_id ||
         !c.extent.width || !c.extent.height || !c.project_id || !*c.project_id ||
         !c.engine_version || !c.ngx_runtime_directory || !*c.ngx_runtime_directory ||
         !c.log_directory || !*c.log_directory)
         return FRAMELAB_INVALID_ARGUMENT;
+    // Both dimensions zero select the output extent. One zero dimension, or a render extent larger
+    // than the output, is rejected.
     if (!c.render_extent.width && !c.render_extent.height) c.render_extent = c.extent;
     if (!c.render_extent.width || !c.render_extent.height || c.render_extent.width > c.extent.width ||
         c.render_extent.height > c.extent.height)

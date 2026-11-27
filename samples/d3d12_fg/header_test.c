@@ -14,19 +14,29 @@ int main(void)
 {
     FrameLabD3D12FgConfig config = {0};
     FrameLabD3D12Fg* fg = 0;
+    /* sizeof the v0.4.0 struct: the v1 fields rounded up to the struct alignment. */
+    const uint32_t align = (uint32_t)_Alignof(FrameLabD3D12FgConfig);
+    const uint32_t v1 = ((uint32_t)offsetof(FrameLabD3D12FgConfig, render_extent) + align - 1) / align * align;
+    uint32_t size;
     if (framelab_abi_version() != FRAMELAB_ABI_VERSION ||
         framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
         return 1;
-    /* A caller built against the v1 layout passes the shorter size: accepted up to argument checks. */
     config.abi_version = FRAMELAB_ABI_VERSION;
-    config.struct_size = (uint32_t)offsetof(FrameLabD3D12FgConfig, render_extent);
+    /* The v1 size and the full size pass the size check and stop at the missing device. */
+    config.struct_size = v1;
     if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_INVALID_ARGUMENT || fg)
         return 2;
-    config.struct_size -= 1;
-    if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
-        return 3;
     config.struct_size = sizeof config;
     if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_INVALID_ARGUMENT || fg)
+        return 3;
+    /* Shorter than v1, or between v1 and the full size: rejected. */
+    config.struct_size = v1 - 1;
+    if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
         return 4;
-    return framelab_d3d12_fg_destroy(fg) == FRAMELAB_OK ? 0 : 5;
+    for (size = v1 + 1; size < sizeof config; ++size) {
+        config.struct_size = size;
+        if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
+            return 5;
+    }
+    return framelab_d3d12_fg_destroy(fg) == FRAMELAB_OK ? 0 : 6;
 }
