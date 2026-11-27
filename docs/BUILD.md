@@ -12,6 +12,8 @@ ctest --test-dir build -C Release --output-on-failure
 
 Pass `-DFRAMEINPUTS_VULKAN_INCLUDE=/path/to/Vulkan/Include` to build the additional CPU-only Vulkan-binding tests. Without headers, only the neutral test target is built. The validated Windows environment ran both targets (59 checks).
 
+For separate external clients, build and install the [SDK](sdk/README.md), then configure each client against the install prefix. For reproducible experimental versions and hardware results, see the [v0.4.0 release notes](sdk/RELEASE_NOTES.md).
+
 ## Windows GPU reference — opt-in
 
 Use a 64-bit Windows developer environment with MSVC 2022 and CMake 3.20+. Obtain the following dependencies separately under their respective terms.

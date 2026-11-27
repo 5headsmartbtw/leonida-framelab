@@ -8,6 +8,8 @@ QA-02 reproduced all four standalone Vulkan queue-handoff cases on the Radeon 86
 
 ## SDK track
 
+The [experimental v0.4.0 scope](sdk/RELEASE_NOTES.md) includes the core SDK and independently verified D3D12FG, D3D12SR and VulkanSR. FL-17 and #24 hold Vulkan FG and the combined Vulkan path.
+
 | Workstream | Priority | Implementation boundary |
 | --- | --- | --- |
 | SDK-01 | P0 | The public ABI and [D3D12 FG dispatch](sdk/D3D12_FG.md) are verified. Public Vulkan SR merged in [#22](https://github.com/5headsmartbtw/leonida-framelab/pull/22). Vulkan FG runs through the installed SDK in draft [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). |

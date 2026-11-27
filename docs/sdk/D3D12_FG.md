@@ -31,6 +31,8 @@ The tested profile uses native-size RGBA8 color, R32_FLOAT depth and RG16_FLOAT 
 
 ## Hardware evidence
 
+The [v0.4.0 regression comparison](RELEASE_NOTES.md#rtx-2050-regression-comparison) repeated the installed 720p FG readback and fence checks on the RTX 2050. Both revisions matched the historical readback hash and retired all three final leases. The separate ordinary-fallback verification passed with D3D12 debug-layer and GPU-based validation. The native FG readback run did not use those validation modes.
+
 The [external sample](../../samples/d3d12_fg) was copied outside the SDK source tree and built against the installed package. The public header smoke test compiled and ran as C. The C++ executable used the public ABI for native NGX dispatch without NVIDIA headers or link inputs.
 
 On the reference RTX 2050 Laptop (Windows 11 build 26200, driver 617.14, external SM86 0.4.2 / bundled NGX FG 310.9.16), six submissions finished and produced five verified interpolations. The test rejected invalid native state and stale depth before recording. It gated the final submission, dropped the caller's leases and resource interfaces, and verified that early retirement and destruction failed. All three final lease callbacks ran after the actual fence completed.
