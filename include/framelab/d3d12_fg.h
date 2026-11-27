@@ -26,6 +26,10 @@ typedef struct FrameLabD3D12FgConfig {
     const wchar_t* log_directory;
     FrameLabD3D12InitReportFn report; /* Optional, called synchronously during create. */
     void* report_user;
+    /* Appended after v0.4.0 (proposal #46). Callers built against the shorter layout are accepted,
+     * and a zero extent selects `extent`. Depth and motion vectors use this extent, which must not
+     * exceed `extent`; color and the generated image use `extent`. */
+    FrameLabExtent render_extent;
 } FrameLabD3D12FgConfig;
 
 typedef struct FrameLabD3D12FgImage {

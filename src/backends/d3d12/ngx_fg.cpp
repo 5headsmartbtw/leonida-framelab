@@ -10,6 +10,8 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_helpers_dlssg_d3d.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -67,7 +69,7 @@ struct FrameLabD3D12Fg {
     ComPtr<ID3D12GraphicsCommandList> commands;
     std::array<ComPtr<ID3D12Resource>, 4> resources;
     fi::Id deviceId{}, queueId{};
-    FrameLabExtent extent{};
+    FrameLabExtent extent{}, renderExtent{};
     uint64_t submittedValue{};
     FrameLabFgStream* stream{};
     NVSDK_NGX_Parameter* parameters{};
@@ -108,14 +110,21 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     if (!out) return FRAMELAB_INVALID_ARGUMENT;
     *out = nullptr;
     if (!config) return FRAMELAB_INVALID_ARGUMENT;
-    if (config->struct_size < sizeof *config || config->abi_version != FRAMELAB_ABI_VERSION)
+    // Callers built before render_extent was appended pass the shorter v1 layout.
+    constexpr auto v1Size = offsetof(FrameLabD3D12FgConfig, render_extent);
+    if (config->struct_size < v1Size || config->abi_version != FRAMELAB_ABI_VERSION)
         return FRAMELAB_ABI_MISMATCH;
-    const auto& c = *config;
+    FrameLabD3D12FgConfig c{};
+    std::memcpy(&c, config, std::min<size_t>(config->struct_size, sizeof c));
     if (!c.device || !c.queue || !c.completion_fence || !c.device_id || !c.queue_id ||
         !c.extent.width || !c.extent.height || !c.project_id || !*c.project_id ||
         !c.engine_version || !c.ngx_runtime_directory || !*c.ngx_runtime_directory ||
         !c.log_directory || !*c.log_directory)
         return FRAMELAB_INVALID_ARGUMENT;
+    if (!c.render_extent.width && !c.render_extent.height) c.render_extent = c.extent;
+    if (!c.render_extent.width || !c.render_extent.height || c.render_extent.width > c.extent.width ||
+        c.render_extent.height > c.extent.height)
+        return FRAMELAB_INVALID_DIMENSIONS;
     if (c.queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT ||
         !d3d::onDevice(*c.queue, *c.device) || !d3d::onDevice(*c.completion_fence, *c.device))
         return FRAMELAB_INVALID_RESOURCE_STATE;
@@ -134,6 +143,7 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     fg->deviceId = c.device_id;
     fg->queueId = c.queue_id;
     fg->extent = c.extent;
+    fg->renderExtent = c.render_extent;
     fg->submittedValue = completed;
     const auto stream = framelab_fg_stream_create(FRAMELAB_ABI_VERSION, &fg->stream);
     if (stream != FRAMELAB_OK) return stream;
@@ -185,8 +195,10 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record_initialize(
     if (fg->ready) return FRAMELAB_INVALID_PHASE;
     if (!fg->directList(commands)) return FRAMELAB_INVALID_RESOURCE_STATE;
     NVSDK_NGX_DLSSG_Create_Params info{};
-    info.Width = info.RenderWidth = fg->extent.width;
-    info.Height = info.RenderHeight = fg->extent.height;
+    info.Width = fg->extent.width;
+    info.Height = fg->extent.height;
+    info.RenderWidth = fg->renderExtent.width;
+    info.RenderHeight = fg->renderExtent.height;
     info.NativeBackbufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     fg->parameters->Set("DLSSG.SynchronousInit", 1u);
     fg->parameters->Set("DLSSG.EnableInterp", 1u);
@@ -216,7 +228,9 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_record(
         framelab_fg_cancel(fg->stream);
         return status;
     };
-    if (input.outputExtent != fi::Extent{fg->extent.width, fg->extent.height})
+    // The native feature is created for one output and one render extent; resizing recreates it.
+    if (input.outputExtent != fi::Extent{fg->extent.width, fg->extent.height} ||
+        input.renderExtent != fi::Extent{fg->renderExtent.width, fg->renderExtent.height})
         return reject(FRAMELAB_INVALID_DIMENSIONS);
     if (input.frameIndex == UINT64_MAX) return reject(FRAMELAB_INVALID_SEQUENCE);
     const auto color = borrow(bindings->color, input.color);
