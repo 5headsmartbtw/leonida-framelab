@@ -26,6 +26,14 @@ typedef struct FrameLabD3D12FgConfig {
     const wchar_t* log_directory;
     FrameLabD3D12InitReportFn report; /* Optional, called synchronously during create. */
     void* report_user;
+    /* Appended after v0.4.0 (ABI version unchanged). Depth and motion vectors use this extent;
+     * color and the generated image use `extent`. Both dimensions zero select `extent`; one zero
+     * dimension or a dimension above `extent` returns FRAMELAB_INVALID_DIMENSIONS. A client built
+     * against the v0.4.0 header passes that struct's size (104 bytes on x64) and is accepted
+     * without this field being read; any size between that and sizeof returns
+     * FRAMELAB_ABI_MISMATCH. A v0.4.0 library uses the output extent for all inputs, so a
+     * different render extent needs this library. */
+    FrameLabExtent render_extent;
 } FrameLabD3D12FgConfig;
 
 typedef struct FrameLabD3D12FgImage {
