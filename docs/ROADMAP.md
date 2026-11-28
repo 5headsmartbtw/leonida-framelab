@@ -38,8 +38,10 @@ Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding
 
 ## Next milestones
 
+The repository owner has temporarily paused active Vulkan-specific development. [Coordination #4](https://github.com/5headsmartbtw/leonida-framelab/issues/4) tracks the current queue. The Vulkan drafts, contributor claims, diagnostic controls and native evidence remain available. [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) remains the extended SyncVal release gate.
+
 1. **Independent reproduction:** rerun the configurable sample from a clean checkout on another developer's machine. Record the GPU, driver, SDK and runtime, actual present modes and any unsupported cases. See the [GPU test procedure](BUILD.md#run-the-gpu-checks).
-2. **Vulkan stabilization.** Close the SyncVal gate in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24), verify native device loss where feasible, and preserve the timeline and binary evidence in [#27](https://github.com/5headsmartbtw/leonida-framelab/pull/27).
+2. **Vulkan stabilization (paused).** [FL-17](https://github.com/5headsmartbtw/leonida-framelab/issues/32) preserves the root-cause investigation. On resumption, continue the pinned native SyncVal reproduction and the remaining failure and lifetime work for the [multi-queue handoff](https://github.com/5headsmartbtw/leonida-framelab/issues/2).
 3. **Semantic provider:** identify final-compatible color/depth/MV/camera/jitter for a real frame with evidence. Unknown bindings remain unavailable.
 4. **Resource leases in Leonida:** pin actual resource/device/view owners, exact generations and completion tickets through all FG/presentation users.
 5. **Shared present seam:** integrate only after previous gates, preserve tracker rollback, lock order, deferred frames and Xbox/DXGI frame-token policy.
@@ -52,5 +54,7 @@ Tracking issues: [runtime paths](https://github.com/5headsmartbtw/leonida-framel
 
 ## Next SDK development stage
 
-1. **D3D12 SR → FG.** [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) follows FL-14 and FL-15. Use the real SR output as FG color. Pin its lifetime through FG completion. Validate depth and motion-vector scaling, camera/jitter conventions, command-list ordering, fences, resize and fallback. Keep each component independently usable.
-2. **FidelityFX Cauldron consumer.** Use the [AMD FidelityFX SDK v1 Cauldron framework](https://gpuopen.com/fidelityfx-cauldron-framework/) as an independent D3D12 host. Add an optional render module after scene motion/depth production and before presentation, using the host's resources and completion fences. Pin and review the chosen upstream revision and licenses before adding dependencies. Keep Cauldron and NVIDIA runtime downloads outside the portable FrameLab build.
+1. **D3D12 SR → FG.** FL-14, FL-15 and the render-extent extension are merged. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) can bring the experimental shared NGX session forward and add installed chained presentation. Use the actual SR output as FG color, retain it through the final FG read, and verify queue and presentation lifetimes, resize, fallback and independent modes.
+2. **D3D12 FG formats and Rust bindings.** Synchronize [#55](https://github.com/5headsmartbtw/leonida-framelab/pull/55) with main. Once its final ABI lands, synchronize the installed C/Rust layout and native Rust consumers in [#52](https://github.com/5headsmartbtw/leonida-framelab/pull/52).
+3. **Bounded asynchronous D3D12 SR.** [FL-19](https://github.com/5headsmartbtw/leonida-framelab/issues/54) starts with same-feature native feasibility on one direct queue. The SDK implementation follows review of the RTX 3060 evidence and lifecycle design.
+4. **FidelityFX Cauldron consumer.** Use the [AMD FidelityFX SDK v1 Cauldron framework](https://gpuopen.com/fidelityfx-cauldron-framework/) as an independent D3D12 host. Add an optional render module after scene motion/depth production and before presentation, using the host's resources and completion fences. Pin and review the chosen upstream revision and licenses before adding dependencies. Keep Cauldron and NVIDIA runtime downloads outside the portable FrameLab build.
