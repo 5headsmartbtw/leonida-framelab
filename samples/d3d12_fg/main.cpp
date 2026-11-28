@@ -345,7 +345,7 @@ void descriptorChecks(const FrameLabD3D12FgConfig& base)
     // A v0.4.0 client passes the v1 size. The bytes after it are not part of its struct, so the
     // invalid extent placed there must not be read.
     config.render_extent = {1, 0};
-    expect(tryCreate(config) == FRAMELAB_OK, "v0.4.0-size config was not accepted");
+    sdk(tryCreate(config), "create with v0.4.0-size config");
     std::printf("ABI_CHECK v1_size=%u created=1\n", v1);
     for (uint32_t size = v1 - 1; size < sizeof config; ++size) {
         if (size == v1) continue;
@@ -582,7 +582,7 @@ int wmain(int argc, wchar_t** argv)
         FrameLabD3D12FgConfig config{sizeof config, FRAMELAB_ABI_VERSION, 1, 1,
             gpu.device.Get(), gpu.queue.Get(), gpu.fence.Get(), outputExtent,
             "31246941-7a24-484c-a4a7-e436c26c6f95", "phase2.1", runtime.c_str(), logs.c_str(), reportInit, nullptr,
-            render};
+            renderArgument ? render : FrameLabExtent{}};
         descriptorChecks(config);
 
         FrameLabD3D12Fg* raw{};

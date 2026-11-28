@@ -30,13 +30,11 @@ int main(void)
     if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_INVALID_ARGUMENT || fg)
         return 3;
     /* Shorter than v1, or between v1 and the full size: rejected. */
-    config.struct_size = v1 - 1;
-    if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
-        return 4;
-    for (size = v1 + 1; size < sizeof config; ++size) {
+    for (size = 0; size < sizeof config; ++size) {
+        if (size == v1) continue;
         config.struct_size = size;
         if (framelab_d3d12_fg_create(&config, &fg) != FRAMELAB_ABI_MISMATCH || fg)
-            return 5;
+            return 4;
     }
-    return framelab_d3d12_fg_destroy(fg) == FRAMELAB_OK ? 0 : 6;
+    return framelab_d3d12_fg_destroy(fg) == FRAMELAB_OK ? 0 : 5;
 }

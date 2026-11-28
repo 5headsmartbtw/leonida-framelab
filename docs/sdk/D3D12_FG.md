@@ -33,12 +33,14 @@ The tested profile uses output-size RGBA8 color, render-size R32_FLOAT depth and
 
 `FrameLabD3D12FgConfig.render_extent` sets the depth and motion-vector size. Color and the generated image use `extent`. The render extent is fixed when the backend is created, because NGX takes it at feature creation.
 
+NGX receives the full render-sized depth and motion-vector subrects. Motion vectors use previous-minus-current UV units in this profile. The backend forwards the supplied `motion_vector_scale` to NGX directly. The synthetic client uses a scale of `{1, 1}` at every render extent.
+
 - Both dimensions zero select `extent`. One zero dimension, or a dimension larger than `extent`, returns `FRAMELAB_INVALID_DIMENSIONS` from create.
 - Every frame must use the configured render and output extents; anything else returns `FRAMELAB_INVALID_DIMENSIONS`. The native color, depth, motion and output resources must also have those sizes; FrameLab reads their descriptions and returns `FRAMELAB_INVALID_RESOURCE_STATE` on a mismatch.
 - To change either extent, retire outstanding work, destroy the backend (it returns `FRAMELAB_BUSY` while work is pending), create a new one and record its initialization. Its first frame must set a history reset; otherwise it returns `FRAMELAB_RESET_REQUIRED`.
 - This is not dynamic resolution. Changing the render extent from frame to frame on one backend is not supported.
 
-The field was appended without changing the ABI version. Backward compatibility covers old clients with this library: a client built against the v0.4.0 header passes that struct's size (104 bytes on x64), and this library accepts it without reading past it and uses `extent` as the render extent. Any `struct_size` between that size and `sizeof(FrameLabD3D12FgConfig)` returns `FRAMELAB_ABI_MISMATCH`. It does not cover new clients with an older library: a v0.4.0 library rejects the new size with `FRAMELAB_ABI_MISMATCH`, so a render extent different from `extent` needs this library.
+The field was appended without changing the ABI version. A client built against the v0.4.0 header passes that struct's size (104 bytes on x64). This library reads the original fields and uses `extent` as the render extent. Any `struct_size` between that size and `sizeof(FrameLabD3D12FgConfig)` returns `FRAMELAB_ABI_MISMATCH`. A v0.4.0 library reads the original fields even when given a larger descriptor and uses the output extent for all inputs. A different render extent requires this library.
 
 ## Hardware evidence
 

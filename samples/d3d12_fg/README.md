@@ -20,3 +20,5 @@ The evidence directory receives the synthetic sixth-frame readback. The sample d
 ```powershell
 & .\tests\run_d3d12_fg_extent_checks.ps1 -Executable .\build-client\Release\d3d12_fg.exe -RuntimeDirectory $runtimeDirectory
 ```
+
+For a runtime profile that requires an app-local proxy, pass `-AppLocalProxy $appLocalProxy` to the runner.

@@ -118,7 +118,7 @@ FrameLabStatus FRAMELAB_CALL framelab_d3d12_fg_create(const FrameLabD3D12FgConfi
     constexpr size_t v1Size = (v1Fields + align - 1) / align * align;
     static_assert(v1Size < sizeof(FrameLabD3D12FgConfig), "render_extent extends the v1 layout");
     const size_t size = config->struct_size;
-    if (config->abi_version != FRAMELAB_ABI_VERSION || (size != v1Size && size < sizeof *config))
+    if ((size != v1Size && size < sizeof *config) || config->abi_version != FRAMELAB_ABI_VERSION)
         return FRAMELAB_ABI_MISMATCH;
     FrameLabD3D12FgConfig c{};
     std::memcpy(&c, config, size == v1Size ? v1Fields : sizeof c);

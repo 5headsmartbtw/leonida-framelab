@@ -6,12 +6,14 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][string]$RuntimeDirectory,
+    [string]$AppLocalProxy = '-',
     [string]$LogRoot = (Join-Path (Get-Location) 'framelab-logs'),
     [string[]]$RenderExtents = @('', '960x540', '640x360')
 )
 $ErrorActionPreference = 'Stop'
 $exe = (Get-Item -LiteralPath $Executable).FullName
 $runtime = (Get-Item -LiteralPath $RuntimeDirectory).FullName
+$proxy = if ($AppLocalProxy -eq '-') { '-' } else { (Get-Item -LiteralPath $AppLocalProxy).FullName }
 $runId = 'd3d12-fg-extent-{0:yyyyMMdd-HHmmss}-{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $logs = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogRoot)) $runId
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -28,7 +30,7 @@ foreach ($render in $RenderExtents) {
     New-Item -ItemType Directory -Path $caseLogs | Out-Null
     $stdout = Join-Path $caseLogs 'stdout.log'
     $stderr = Join-Path $caseLogs 'stderr.log'
-    $arguments = @("`"$runtime`"", "`"$caseLogs`"", '-')
+    $arguments = @("`"$runtime`"", "`"$caseLogs`"", "`"$proxy`"")
     if ($render) { $arguments += @('--render', $render) }
     $run = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden `
         -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -55,11 +57,12 @@ foreach ($render in $RenderExtents) {
         recreated_max_edge_error = if ($recreated.Success) { [int]$recreated.Groups[5].Value } else { $null }
     }
     $readback = Join-Path $caseLogs 'generated-5.rgba'
+    $row.readback_sha256 = $null
     if (Test-Path -LiteralPath $readback) {
         if ((Get-Item -LiteralPath $readback).Length -ne 1280 * 720 * 4) { throw "Unexpected readback size: $readback" }
         $row.readback_sha256 = (Get-FileHash -LiteralPath $readback -Algorithm SHA256).Hash
     }
-    $ok = $run.ExitCode -eq 0 -and $row.stderr_bytes -eq 0 -and $missing.Count -eq 0 -and
+    $ok = $run.ExitCode -eq 0 -and $row.stderr_bytes -eq 0 -and $missing.Count -eq 0 -and $row.readback_sha256 -and
         $row.verified -eq 5 -and $row.lease_releases -eq 3 -and $row.recreated_verified -eq 2 -and
         $row.recreated_lease_releases -eq 3
     $row.verdict = if ($ok) { 'pass' } else { 'fail' }
@@ -68,11 +71,13 @@ foreach ($render in $RenderExtents) {
     Write-Output ("{0}: {1} (exit {2}, max edge error {3} px)" -f $name, $row.verdict, $run.ExitCode, $row.max_edge_error)
 }
 
-$gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterCompatibility -match 'NVIDIA' } | Select-Object -First 1
+$gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+    Where-Object { $_.AdapterCompatibility -match 'NVIDIA' } | Select-Object -First 1
 $report = [ordered]@{
     run_id = $runId
     executable = $exe
     runtime_directory = $runtime
+    app_local_proxy = $proxy
     gpu = if ($gpu) { $gpu.Name } else { $null }
     driver = if ($gpu) { $gpu.DriverVersion } else { $null }
     os = [Environment]::OSVersion.VersionString
