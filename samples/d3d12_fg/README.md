@@ -39,7 +39,7 @@ Add `--vsync` (sync interval 1) or `--no-vsync` (sync interval 0, with `DXGI_PRE
 | `--timing` | Skips the sentinel clear and readback. Records source intervals, GPU timestamps for source submissions and backbuffer copies, and a separate count of generated Presents without image verification. |
 | `--no-pacing` | Skips the CPU delay after each generated Present. The default delay approximates the previous real-to-generated Present interval. |
 
-The JSON summary records sampled peak VRAM, median post-warm-up VRAM, and the minimum local DXGI budget. Set `FRAMELAB_D3D12_FAIL_FG_ALLOCATION=1` in a separate correctness run to exercise ordinary rendering and cleanup after an optional FG allocation fails.
+The JSON summary records sampled peak VRAM, median post-warm-up VRAM, and the minimum local DXGI budget. Each segment compares live usage at warm-up and before backend teardown. The summary also reports usage after cleanup. Set `FRAMELAB_D3D12_FAIL_FG_ALLOCATION=1` in a separate correctness run to exercise ordinary rendering and cleanup after an optional FG allocation fails.
 
 [`tests/run_d3d12_fg_present_checks.ps1`](../../tests/run_d3d12_fg_present_checks.ps1) runs all cases in separate processes:
 

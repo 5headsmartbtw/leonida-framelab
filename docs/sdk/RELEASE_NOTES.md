@@ -51,7 +51,7 @@ The core package needs a C++20 toolchain and CMake 3.20+. Each Windows x64 compo
 ## Open gates
 
 - [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24) holds installed Vulkan FG and combined Vulkan SR → FG. Both legacy and installed FG traces reproduced eight extended SyncVal write-after-write diagnostics with zero standard validation errors and warnings. The official RTX 5090 report also records separate strict-runner libpng warnings. The cause is open. The [NGX-free control](../../tests/vulkan-syncval-control/README.md) is available for triage. The included legacy Vulkan sample remains a research fixture.
-- D3D12 SR and FG take mutually exclusive NGX session ownership. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) tracks installed-client DXGI presentation. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) tracks combined operation.
+- D3D12 SR and FG take mutually exclusive NGX session ownership. Main adds [installed-client DXGI presentation](D3D12_FG.md#dxgi-presentation) through FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) tracks combined operation.
 - The hardware checks cover the exact synthetic profiles above. They did not measure physical scanout, latency or game behavior. The RTX 2050 experimental FG result does not establish official support for that GPU.
 - [VIctory](../integrations/victory/README.md), Leonida and Cauldron are downstream research tracks. Production use and game compatibility remain unverified.
 

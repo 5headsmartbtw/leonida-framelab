@@ -18,7 +18,7 @@ FrameLab предоставляет устанавливаемый C ABI для 
 | Rust FFI | В main | Низкоуровневые привязки с проверкой раскладки C ABI и жизненного цикла установленной библиотеки. [#11](https://github.com/5headsmartbtw/leonida-framelab/pull/11) |
 | D3D12 FG | В main | Необязательный компонент Windows x64. Нативный Direct NGX, проверка изображения и освобождение по fence. [#19](https://github.com/5headsmartbtw/leonida-framelab/pull/19) |
 | D3D12 SR | В main | Необязательный компонент Direct NGX для Windows x64. Проверены чтение результата и освобождение ресурсов по fence. [D3D12SR](docs/sdk/D3D12_SR.md) · [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36) |
-| Вывод сгенерированных кадров через D3D12/DXGI | Запланировано для клиента SDK | [Ранний отдельный пример](experiments/d3d12/README.md) проверил Present обычных и сгенерированных кадров. Клиент установленного SDK проверил чтение изображения. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
+| Вывод сгенерированных кадров через D3D12/DXGI | Реализовано в клиенте SDK | [Пример для установленного SDK](samples/d3d12_fg) выводит обычные и сгенерированные кадры через swapchain приложения в режиме flip-model. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
 | D3D12 SR + FG | Запланировано | Зависит от FL-14 и вывода кадров из FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) |
 | Vulkan FG | Эксперимент · открытый черновик | Прежний пример есть в main. Установленный Direct NGX и чтение результата проверены в [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). Релиз блокирует [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
 | Vulkan SR | В main | Необязательный компонент Streamline для Windows x64. Проверены чтение результата, resize, сброс истории и освобождение по timeline. [#22](https://github.com/5headsmartbtw/leonida-framelab/pull/22) |
@@ -127,7 +127,7 @@ target_link_libraries(my_renderer PRIVATE FrameLab::FrameLab)
 
 ## План разработки и внешние рендереры
 
-- Следующие этапы D3D12 — [вывод DXGI клиентом SDK (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) и [совместный SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
+- Клиент SDK поддерживает [вывод через DXGI](docs/sdk/D3D12_FG.md#dxgi-presentation). Следующий этап D3D12 — [совместный SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
 - Приоритеты Vulkan — [поиск причины SyncVal (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), ревью передачи ресурсов и обработки сбоев, а также независимые проверки на других GPU. См. [план разработки](docs/ROADMAP.md) и [открытое предложение по стабилизации #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - В локальном проекте на AMD FidelityFX Cauldron подключён установленный SDK, загружена DLL, проверен ABI и продолжен обычный рендеринг Sponza. Более поздняя отдельная проверка с подписанным Streamline инициализировала runtime и запросила требования DLSS. Нативные вызовы SR и FG внутри Cauldron остаются в разработке. Публичное предложение по интеграции описано в [#28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - Leonida и VIctory остаются необязательными внешними интеграциями. См. [аудит Leonida](docs/integrations/leonida/README.md) и [аудит VIctory](docs/integrations/victory/README.md).

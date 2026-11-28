@@ -77,3 +77,5 @@ DXGI presentation was measured on an RTX 5090: Windows 11 build 26300, driver 62
   - Without VSync: p50 27.7 ms, p95 37.7 ms. Present-to-display time p50 was 0.8 ms.
 
   These intervals reflect the sample's per-Present GPU waits and readback, not production pacing. Physical scanout and end-to-end latency were not measured.
+
+See the [FL-15 maintainer review](https://github.com/5headsmartbtw/leonida-framelab/pull/44) for the integrated RTX 2050 gate. It records API Present counts separately from display-event evidence and distinguishes the stock and experimental runtime profiles.
