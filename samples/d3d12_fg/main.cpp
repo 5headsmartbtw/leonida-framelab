@@ -18,6 +18,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -109,7 +110,7 @@ struct Validation {
 };
 
 struct Memory {
-    uint64_t start = 0, warm = 0, end = 0, peak = 0, budget = UINT64_MAX;
+    uint64_t start = 0, warm = 0, end = 0, cleanup = 0, growth = 0, peak = 0, budget = UINT64_MAX;
     std::vector<uint64_t> steady;
 };
 
@@ -389,8 +390,7 @@ struct Presenter {
     {
         if (swapchain) {
             // On an error, still drain queued Presents if the device remains usable.
-            try { gpuOwner->drain(); } catch (const GpuError&) {}
-            catch (const std::runtime_error&) {}
+            try { gpuOwner->drain(); } catch (const std::runtime_error&) {}
         }
         teardown();
     }
@@ -750,7 +750,6 @@ void writeSummary(const Options& options, const Gpu& gpu, const Presenter& prese
         std::fprintf(file, "    \"%s\": {\"count\": %zu, \"p50\": %.3f, \"p95\": %.3f, \"max\": %.3f}%s\n", name,
                      v.size(), percentile(v, 0.5), percentile(v, 0.95), percentile(v, 1.0), last ? "" : ",");
     };
-    const uint64_t growth = gpu.memory.end > gpu.memory.warm ? gpu.memory.end - gpu.memory.warm : 0;
     std::fprintf(file, "{\n  \"result\": \"%s\",\n", pass ? "pass" : "fail");
     std::fprintf(file, "  \"mode\": {\"fg\": %s, \"sync_interval\": %u, \"tearing\": %s, \"pacing\": \"%s\", "
                  "\"timing\": %s, \"debug_layer\": %s, \"frames_per_segment\": %u, \"segments\": %u, \"resize\": %s, "
@@ -786,6 +785,9 @@ void writeSummary(const Options& options, const Gpu& gpu, const Presenter& prese
     stat("source_submission", totals.sourceGpu, false);
     stat("backbuffer_copy", in.copyGpu, true);
     std::fprintf(file, "  },\n");
+    const double sourceMs = std::accumulate(totals.sourceIntervals.begin(), totals.sourceIntervals.end(), 0.0);
+    const double sourceFps = sourceMs > 0 ? 1000.0 * totals.sourceIntervals.size() / sourceMs : 0;
+    std::fprintf(file, "  \"source_fps_after_warmup\": %.3f,\n", sourceFps);
     const bool stats = presenter.firstStatsValid && presenter.lastStatsValid;
     std::fprintf(file, "  \"frame_statistics\": {\"available\": %s, \"last_hr\": \"%#lx\", \"present_count\": %u, "
                  "\"present_refresh_count\": %u, \"sync_refresh_count\": %u},\n",
@@ -796,10 +798,11 @@ void writeSummary(const Options& options, const Gpu& gpu, const Presenter& prese
     auto steady = gpu.memory.steady;
     std::sort(steady.begin(), steady.end());
     const uint64_t medianUsage = steady.empty() ? 0 : steady[steady.size() / 2];
-    std::fprintf(file, "  \"memory_bytes\": {\"start\": %llu, \"warm\": %llu, \"end\": %llu, \"growth_after_warm\": "
-                 "%llu, \"peak_local\": %llu, \"steady_local\": %llu, \"budget\": %llu},\n",
+    std::fprintf(file, "  \"memory_bytes\": {\"start\": %llu, \"warm\": %llu, \"end\": %llu, \"cleanup\": %llu, "
+                 "\"growth_after_warm\": %llu, \"peak_local\": %llu, \"steady_local\": %llu, \"budget\": %llu},\n",
                  static_cast<unsigned long long>(gpu.memory.start), static_cast<unsigned long long>(gpu.memory.warm),
-                 static_cast<unsigned long long>(gpu.memory.end), static_cast<unsigned long long>(growth),
+                 static_cast<unsigned long long>(gpu.memory.end), static_cast<unsigned long long>(gpu.memory.cleanup),
+                 static_cast<unsigned long long>(gpu.memory.growth),
                  static_cast<unsigned long long>(gpu.memory.peak), static_cast<unsigned long long>(medianUsage),
                  static_cast<unsigned long long>(gpu.memory.budget == UINT64_MAX ? 0 : gpu.memory.budget));
     std::fprintf(file, "  \"validation\": {\"debug_layer\": %s, \"gpu_based\": %s, \"errors\": %u, \"warnings\": %u}\n}\n",
@@ -842,7 +845,7 @@ int wmain(int argc, wchar_t** argv)
         if (presenting) presenter.initialize(gpu, options.vsync, options.pace);
         Totals totals;
         const unsigned warmFrame = std::min(options.frames - 1, std::max(2u, options.frames / 4));
-        // The warm-up sample is taken in every segment, so growth is measured within the last segment.
+        // Compare live allocations at warm-up and segment end before destroying the backend.
         const auto sampleFrame = [&](unsigned i) {
             const auto usage = gpu.sampleMemory();
             if (i == warmFrame) gpu.memory.warm = usage;
@@ -1230,7 +1233,12 @@ int wmain(int argc, wchar_t** argv)
             totals.dropped += dropped;
             totals.expectedInterpolations += expectedInterpolations;
             // Destroy only after the last packet retired. Check the result, then drop caller leases.
-            if (presenting) gpu.drain();
+            if (presenting) {
+                gpu.drain();
+                gpu.memory.end = gpu.sampleMemory();
+                if (gpu.memory.end > gpu.memory.warm)
+                    gpu.memory.growth = std::max(gpu.memory.growth, gpu.memory.end - gpu.memory.warm);
+            }
             if (fg) sdk(framelab_d3d12_fg_destroy(fg.release()), "destroy idle FG backend");
             colorLease.reset();
             depthLease.reset();
@@ -1272,20 +1280,21 @@ int wmain(int argc, wchar_t** argv)
             gpu.validation.drain();
             return result || gpu.validation.errors || gpu.validation.warnings ? 1 : 0;
         }
-        gpu.memory.end = gpu.sampleMemory();
         // Drain the final Present, release the swapchain and window before the device, and collect any
         // debug messages raised by that teardown.
         presenter.teardown();
+        gpu.memory.cleanup = gpu.sampleMemory();
         std::puts("TEARDOWN final_present_drained=1 swapchain_released=1");
         gpu.validation.drain();
         // Extended runs must not keep growing after warm-up. 32 MiB allows for driver-side pooling noise.
-        const uint64_t growth = gpu.memory.end > gpu.memory.warm ? gpu.memory.end - gpu.memory.warm : 0;
-        const bool stable = options.frames < 120 || (gpu.memory.warm != 0 && growth <= (32ull << 20));
+        const bool stable = options.frames < 120 || (gpu.memory.warm != 0 && gpu.memory.end != 0 &&
+                                                    gpu.memory.growth <= (32ull << 20));
         const bool clean = !gpu.validation.errors && !gpu.validation.warnings;
         const bool leases = totals.leaseReleases == totals.leasesCreated;
         std::printf("MEMORY start_mb=%.1f warm_mb=%.1f end_mb=%.1f peak_mb=%.1f budget_mb=%.1f growth_mb=%.1f\n",
                     gpu.memory.start / 1048576.0, gpu.memory.warm / 1048576.0, gpu.memory.end / 1048576.0,
-                    gpu.memory.peak / 1048576.0, (gpu.memory.budget == UINT64_MAX ? 0 : gpu.memory.budget) / 1048576.0, growth / 1048576.0);
+                    gpu.memory.peak / 1048576.0, (gpu.memory.budget == UINT64_MAX ? 0 : gpu.memory.budget) / 1048576.0,
+                    gpu.memory.growth / 1048576.0);
         if (options.debug)
             std::printf("D3D12_VALIDATION errors=%u warnings=%u\n", gpu.validation.errors, gpu.validation.warnings);
         const bool pass = !result && stable && clean && leases &&
