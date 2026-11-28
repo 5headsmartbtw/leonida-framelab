@@ -22,6 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $exe = (Get-Item -LiteralPath $Executable).FullName
 $runtime = (Get-Item -LiteralPath $RuntimeDirectory).FullName
+$Proxy = if ($Proxy -eq '-') { '-' } else { (Get-Item -LiteralPath $Proxy).FullName }
 $runId = 'd3d12-fg-present-{0:yyyyMMdd-HHmmss}-{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $logs = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogRoot)) $runId
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -44,7 +45,7 @@ $cases += @{ name = 'timing-no-vsync'; args = @('--no-vsync', '--timing', '--fra
 $cases += @{ name = 'timing-vsync'; args = @('--vsync', '--timing', '--frames', "$TimingFrames") }
 
 $monitor = if ($PresentMon) { (Get-Item -LiteralPath $PresentMon).FullName } else { $null }
-$session = 'FrameLabD3D12FgPresent'
+$session = "FrameLab-$runId"
 
 function Start-Capture([string]$Directory) {
     $raw = Join-Path $Directory 'presentmon-raw.csv'
@@ -95,6 +96,7 @@ function Stop-Capture($Capture, [string]$Directory, [int]$ProcessId) {
         }
     }
     $displayed = @($rows | Where-Object { $_.Dropped -eq '0' })
+    $dropped = @($rows | Where-Object { $_.Dropped -eq '1' })
     $between = @($rows | Select-Object -Skip 1 | ForEach-Object { [double]$_.msBetweenPresents })
     $changes = @($displayed | ForEach-Object { [double]$_.msBetweenDisplayChange } | Where-Object { $_ -gt 0 })
     $modes = [ordered]@{}
@@ -102,7 +104,8 @@ function Stop-Capture($Capture, [string]$Directory, [int]$ProcessId) {
     [ordered]@{
         presents = $rows.Count
         displayed = $displayed.Count
-        dropped = $rows.Count - $displayed.Count
+        dropped = $dropped.Count
+        unknown_display_outcome = $rows.Count - $displayed.Count - $dropped.Count
         present_modes = $modes
         allows_tearing = @($rows | Select-Object -ExpandProperty AllowsTearing -Unique)
         sync_intervals = @($rows | Select-Object -ExpandProperty SyncInterval -Unique)
@@ -111,6 +114,27 @@ function Stop-Capture($Capture, [string]$Directory, [int]$ProcessId) {
         ms_between_display_change = & $stats $changes
         ms_until_displayed = & $stats @($displayed | ForEach-Object { [double]$_.msUntilDisplayed })
     }
+}
+
+function Test-PresentOrder([string]$Text, [int]$ExpectedReal, [int]$ExpectedGenerated) {
+    $nextReal = 0
+    $generated = 0
+    $midpointPending = $false
+    foreach ($entry in [regex]::Matches($Text, '(?m)^DXGI_PRESENT source=(\d+) previous=(\d+) kind=(real|generated) .* hr=0\s*$')) {
+        $source = [int]$entry.Groups[1].Value
+        $previous = [int]$entry.Groups[2].Value
+        if ($source -ne $nextReal) { return $false }
+        if ($entry.Groups[3].Value -eq 'generated') {
+            if ($midpointPending -or $source -eq 0 -or $previous -ne $source - 1) { return $false }
+            $midpointPending = $true
+            ++$generated
+        } else {
+            if ($previous -ne $source) { return $false }
+            $midpointPending = $false
+            ++$nextReal
+        }
+    }
+    $nextReal -eq $ExpectedReal -and $generated -eq $ExpectedGenerated -and !$midpointPending
 }
 
 $results = @()
@@ -140,7 +164,7 @@ foreach ($case in $cases) {
     $run.WaitForExit()
     if ($null -eq $run.ExitCode) { throw "Exit code unavailable: $($case.name)" }
     $captured = if ($capture) { Stop-Capture $capture $caseLogs $run.Id } else { $null }
-    $text = Get-Content -LiteralPath $stdout -Raw
+    $text = [string](Get-Content -LiteralPath $stdout -Raw)
     $summaryPath = Join-Path $caseLogs 'd3d12-fg-summary.json'
     $summary = if (Test-Path -LiteralPath $summaryPath) { Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json } else { $null }
     $row = [ordered]@{
@@ -160,6 +184,35 @@ foreach ($case in $cases) {
         if (Test-Path -LiteralPath $readback) { $row.readback_sha256 = (Get-FileHash -LiteralPath $readback -Algorithm SHA256).Hash }
     } else {
         $ok = $run.ExitCode -eq 0 -and $summary -and $summary.result -eq 'pass' -and $text -match 'FL15_RESULT pass'
+        if ($ok) {
+            $expectedFrames = switch -Wildcard ($case.name) {
+                'extended-*' { $ExtendedFrames }
+                'timing-*' { $TimingFrames }
+                { $_ -in 'recovery', 'debug' } { 12 }
+                default { 6 }
+            }
+            $expectedEvaluated = if ($case.name -eq 'no-fg') { 0 } elseif ($case.name -in 'recovery', 'debug') { 10 } else { $expectedFrames }
+            $expectedGenerated = if ($case.name -eq 'no-fg') { 0 } elseif ($case.name -in 'recovery', 'debug') { 4 } else {
+                $expectedFrames - 1 - [Math]::Floor(($expectedFrames - 1) / 25)
+            }
+            $counters = $summary.counters
+            $ok = $counters.rendered -eq $expectedFrames -and $counters.real_presents -eq $expectedFrames -and
+                $counters.native_evaluations -eq $expectedEvaluated -and $counters.generated_presents -eq $expectedGenerated -and
+                $summary.leases.created -eq $summary.leases.released -and $summary.fence.completed -ge $summary.fence.signalled -and
+                (Test-PresentOrder $text $expectedFrames $expectedGenerated)
+            if ($case.name -in 'recovery', 'debug') {
+                $ok = $ok -and $counters.pending_resize_checks -eq 1 -and $counters.dropped -eq 2 -and
+                    $counters.history_contract_verified -and $text -match 'ABI_CHECK resize_fg_pending=1' -and
+                    $text -match 'ABI_CHECK resize_requires_reset=1' -and
+                    $text -match 'DXGI_RESIZE_PENDING outstanding=1 .* backbuffer=\d+'
+            }
+            if ($case.name -like 'timing-*') {
+                $ok = $ok -and $counters.unverified_generated_presented -eq $expectedGenerated -and
+                    $summary.gpu_interval_ms.source_submission.count -gt 0 -and $summary.gpu_interval_ms.backbuffer_copy.count -gt 0
+            } else {
+                $ok = $ok -and $counters.verified_generated -eq $expectedGenerated
+            }
+        }
         if ($summary -and $summary.counters.occluded_presents -gt 0) {
             Write-Warning "$($case.name): $($summary.counters.occluded_presents) Present calls reported DXGI_STATUS_OCCLUDED"
         }
@@ -175,11 +228,13 @@ foreach ($case in $cases) {
     Write-Output ("{0}: {1} (exit {2}, {3} s{4})" -f $case.name, $row.verdict, $run.ExitCode, $row.seconds, $measured)
 }
 
-$gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterCompatibility -match 'NVIDIA' } | Select-Object -First 1
+$gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+    Where-Object { $_.AdapterCompatibility -match 'NVIDIA' } | Select-Object -First 1
 $report = [ordered]@{
     run_id = $runId
     executable = $exe
     runtime_directory = $runtime
+    app_local_proxy = $Proxy
     gpu = if ($gpu) { $gpu.Name } else { $null }
     driver = if ($gpu) { $gpu.DriverVersion } else { $null }
     os = [Environment]::OSVersion.VersionString

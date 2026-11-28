@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -27,14 +29,21 @@ using Clock = std::chrono::steady_clock;
 constexpr FrameLabExtent initialExtent{1280, 720};
 constexpr FrameLabExtent resizedExtent{960, 540};
 constexpr unsigned readbackFrames = 6;
+constexpr unsigned recreatedFrames = 3;
 constexpr uint32_t sentinel = 0xffff00ff;
 constexpr HRESULT occluded = DXGI_STATUS_OCCLUDED;
+
+bool operator==(FrameLabExtent a, FrameLabExtent b) { return a.width == b.width && a.height == b.height; }
+
+struct GpuError : std::runtime_error {
+    HRESULT result;
+    GpuError(HRESULT value, const char* step) : std::runtime_error(step), result(value) {}
+};
 
 void check(HRESULT result, const char* step)
 {
     if (SUCCEEDED(result)) return;
-    std::fprintf(stderr, "%s: HRESULT 0x%08lx\n", step, result);
-    throw std::runtime_error(step);
+    throw GpuError(result, step);
 }
 
 void sdk(FrameLabStatus result, const char* step)
@@ -61,8 +70,9 @@ struct Options {
     std::filesystem::path runtime, logs;
     const wchar_t* proxy = L"-";
     bool presenting = false, vsync = false, noFg = false, resize = false, reject = false, debug = false;
-    bool timing = false, pace = true;
+    bool timing = false, pace = true, gpuValidation = false;
     unsigned frames = readbackFrames;
+    FrameLabExtent render{};
     int cutAt = -1;
 };
 
@@ -99,7 +109,8 @@ struct Validation {
 };
 
 struct Memory {
-    uint64_t start = 0, warm = 0, end = 0, peak = 0, budget = 0;
+    uint64_t start = 0, warm = 0, end = 0, peak = 0, budget = UINT64_MAX;
+    std::vector<uint64_t> steady;
 };
 
 struct Gpu {
@@ -115,16 +126,58 @@ struct Gpu {
     Memory memory;
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     uint64_t signal = 0;
+    UINT64 timestampFrequency = 0;
+    ComPtr<ID3D12QueryHeap> timestamps;
+    ComPtr<ID3D12Resource> timestampBuffer;
+
+    void initializeTiming()
+    {
+        D3D12_QUERY_HEAP_DESC desc{};
+        desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+        desc.Count = 2;
+        check(device->CreateQueryHeap(&desc, IID_PPV_ARGS(&timestamps)), "create timestamp queries");
+        timestampBuffer = buffer(2 * sizeof(UINT64), D3D12_HEAP_TYPE_READBACK);
+        check(queue->GetTimestampFrequency(&timestampFrequency), "query timestamp frequency");
+    }
+
+    void startTiming()
+    {
+        if (timestamps) list->EndQuery(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    }
+
+    void stopTiming()
+    {
+        if (!timestamps) return;
+        list->EndQuery(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        list->ResolveQueryData(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestampBuffer.Get(), 0);
+    }
+
+    double elapsedGpuMs()
+    {
+        void* data{};
+        const D3D12_RANGE range{0, 2 * sizeof(UINT64)};
+        check(timestampBuffer->Map(0, &range, &data), "map timestamp readback");
+        const auto* values = static_cast<const UINT64*>(data);
+        const double elapsed = 1000.0 * double(values[1] - values[0]) / double(timestampFrequency);
+        const D3D12_RANGE written{0, 0};
+        timestampBuffer->Unmap(0, &written);
+        return elapsed;
+    }
 
     ~Gpu() { if (event) CloseHandle(event); }
 
-    void initialize(bool debugLayer)
+    void initialize(bool debugLayer, bool gpuValidation)
     {
         expect(event != nullptr, "create fence event");
         if (debugLayer) {
             ComPtr<ID3D12Debug> debug;
             check(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)), "get D3D12 debug layer");
             debug->EnableDebugLayer();
+            if (gpuValidation) {
+                ComPtr<ID3D12Debug1> debug1;
+                check(debug.As(&debug1), "get GPU-based validation interface");
+                debug1->SetEnableGPUBasedValidation(TRUE);
+            }
         }
         ComPtr<IDXGIFactory1> factory;
         check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "create DXGI factory");
@@ -172,7 +225,7 @@ struct Gpu {
             FAILED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)))
             return 0;
         memory.peak = std::max<uint64_t>(memory.peak, info.CurrentUsage);
-        memory.budget = info.Budget;
+        memory.budget = std::min<uint64_t>(memory.budget, info.Budget);
         return info.CurrentUsage;
     }
 
@@ -199,7 +252,13 @@ struct Gpu {
         check(device->GetDeviceRemovedReason(), "check device after fence");
     }
 
-    Texture texture(DXGI_FORMAT format)
+    void drain()
+    {
+        check(queue->Signal(fence.Get(), ++signal), "signal presentation drain");
+        wait();
+    }
+
+    Texture texture(DXGI_FORMAT format, FrameLabExtent extent)
     {
         Texture output;
         D3D12_HEAP_PROPERTIES heap{};
@@ -259,8 +318,8 @@ struct Gpu {
         auto input = buffer(size, D3D12_HEAP_TYPE_UPLOAD);
         void* mapped{};
         check(input->Map(0, nullptr, &mapped), "map input buffer");
-        const size_t rowBytes = extent.width * sizeof(uint32_t);
-        for (unsigned y = 0; y < extent.height; ++y)
+        const size_t rowBytes = size_t(layout.Footprint.Width) * sizeof(uint32_t);
+        for (unsigned y = 0; y < layout.Footprint.Height; ++y)
             std::memcpy(static_cast<char*>(mapped) + layout.Offset + y * layout.Footprint.RowPitch,
                         static_cast<const char*>(data) + y * rowBytes, rowBytes);
         input->Unmap(0, nullptr);
@@ -300,14 +359,20 @@ double percentile(std::vector<double> values, double p)
 }
 
 struct Intervals {
-    std::vector<double> realToGenerated, generatedToReal, realToReal;
+    std::vector<double> realToGenerated, generatedToReal, realToReal, copyGpu;
 };
 
 enum class Kind { real, generated };
 
 // Application-owned DXGI flip-model presentation of real frames and Direct NGX generated frames.
 // FrameLab does not create, own or present the swapchain.
+struct Gate {
+    ComPtr<ID3D12Fence> fence;
+    ~Gate() { if (fence) fence->Signal(1); }
+};
+
 struct Presenter {
+    Gpu* gpuOwner = nullptr;
     HWND window{};
     ComPtr<IDXGISwapChain3> swapchain;
     bool vsync = false, tearing = false, pace = true;
@@ -320,7 +385,15 @@ struct Presenter {
     bool firstStatsValid = false, lastStatsValid = false;
     HRESULT statsResult = S_OK;
 
-    ~Presenter() { teardown(); }
+    ~Presenter()
+    {
+        if (swapchain) {
+            // On an error, still drain queued Presents if the device remains usable.
+            try { gpuOwner->drain(); } catch (const GpuError&) {}
+            catch (const std::runtime_error&) {}
+        }
+        teardown();
+    }
 
     void teardown()
     {
@@ -331,6 +404,7 @@ struct Presenter {
 
     void initialize(Gpu& gpu, bool sync, bool paced)
     {
+        gpuOwner = &gpu;
         vsync = sync;
         pace = paced;
         const auto extent = gpu.extent;
@@ -384,17 +458,7 @@ struct Presenter {
     // application does not resize while that work is outstanding.
     void resize(Gpu& gpu, FrameLabExtent extent)
     {
-        ComPtr<ID3D12Fence> gate;
-        check(gpu.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate)), "create resize gate");
-        check(gpu.queue->Wait(gate.Get(), 1), "hold queue before resize");
-        check(gpu.queue->Signal(gpu.fence.Get(), ++gpu.signal), "signal presentation drain");
-        const auto completed = gpu.fence->GetCompletedValue();
-        expect(completed < gpu.signal, "resize gate did not hold queued work");
-        std::printf("DXGI_RESIZE_PENDING outstanding=1 completed=%llu signal=%llu\n",
-                    static_cast<unsigned long long>(completed), static_cast<unsigned long long>(gpu.signal));
-        check(gate->Signal(1), "release resize gate");
-        gpu.wait();
-        ++pendingResizeChecks;
+        expect(gpu.fence->GetCompletedValue() == gpu.signal, "drain presentation before resizing");
         check(swapchain->ResizeBuffers(0, extent.width, extent.height, DXGI_FORMAT_UNKNOWN,
               tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0), "resize swapchain buffers");
         RECT rect{0, 0, LONG(extent.width), LONG(extent.height)};
@@ -404,6 +468,7 @@ struct Presenter {
                             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != 0, "resize window");
         gpu.extent = extent;
         lastPresent = {};
+        firstStatsValid = lastStatsValid = false;
         std::printf("DXGI_RESIZE width=%u height=%u\n", extent.width, extent.height);
     }
 
@@ -436,7 +501,7 @@ struct Presenter {
         }
     }
 
-    void present(Gpu& gpu, Texture& input, unsigned frame, Kind kind)
+    void present(Gpu& gpu, Texture& input, unsigned frame, Kind kind, bool measured, bool pendingResize = false)
     {
         const bool generated = kind == Kind::generated;
         const auto index = swapchain->GetCurrentBackBufferIndex();
@@ -445,13 +510,29 @@ struct Presenter {
             backbuffer.state = D3D12_RESOURCE_STATE_PRESENT;
             check(swapchain->GetBuffer(index, IID_PPV_ARGS(&backbuffer.resource)), "get current backbuffer");
             gpu.begin();
+            gpu.startTiming();
             gpu.transition(input, D3D12_RESOURCE_STATE_COPY_SOURCE);
             gpu.transition(backbuffer, D3D12_RESOURCE_STATE_COPY_DEST);
             gpu.list->CopyResource(backbuffer.resource.Get(), input.resource.Get());
             gpu.transition(backbuffer, D3D12_RESOURCE_STATE_PRESENT);
+            gpu.stopTiming();
+            Gate gate;
+            if (pendingResize) {
+                check(gpu.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate.fence)), "create resize gate");
+                check(gpu.queue->Wait(gate.fence.Get(), 1), "hold actual backbuffer copy before resize");
+            }
             gpu.enqueue(nullptr);
+            if (gate.fence) {
+                const auto completed = gpu.fence->GetCompletedValue();
+                expect(completed < gpu.signal, "resize gate did not retain the backbuffer copy");
+                std::printf("DXGI_RESIZE_PENDING outstanding=1 completed=%llu signal=%llu backbuffer=%u\n",
+                            static_cast<unsigned long long>(completed), static_cast<unsigned long long>(gpu.signal), index);
+                ++pendingResizeChecks;
+                check(gate.fence->Signal(1), "release resize gate");
+            }
             // The single allocator is reset by the next begin(). Wait so the copy has completed first.
             gpu.wait();
+            if (gpu.timestamps && measured) intervals.copyGpu.push_back(gpu.elapsedGpuMs());
         } // The backbuffer reference is released before Present and before any ResizeBuffers.
         hold(kind);
         ++(generated ? generatedAttempts : realAttempts);
@@ -478,6 +559,8 @@ struct Presenter {
             if (!firstStatsValid) { firstStats = stats; firstStatsValid = true; }
             lastStats = stats;
             lastStatsValid = true;
+        } else if (statsResult == DXGI_ERROR_FRAME_STATISTICS_DISJOINT) {
+            firstStatsValid = lastStatsValid = false;
         }
     }
 };
@@ -527,11 +610,6 @@ Lease pin(const Texture& texture, unsigned& releases)
     return {handle, &framelab_lease_destroy};
 }
 
-struct Gate {
-    ComPtr<ID3D12Fence> fence;
-    ~Gate() { if (fence) fence->Signal(1); }
-};
-
 void writeReadback(const std::filesystem::path& path, const std::vector<uint32_t>& image)
 {
     FILE* file = _wfopen(path.c_str(), L"wb");
@@ -552,10 +630,73 @@ struct Scene {
     bool discontinuity(unsigned i) const { return i && left(i) != left(i - 1) + 32; }
 };
 
+// Left and right edges of the rectangle on the middle row of a readback, or -1 if absent. The
+// rectangle is orange; the checkerboard is grey.
+void edges(const std::vector<uint32_t>& image, int& left, int& right)
+{
+    left = right = -1;
+    const auto* row = image.data() + size_t(initialExtent.height / 2) * initialExtent.width;
+    for (unsigned x = 0; x < initialExtent.width; ++x) {
+        const int red = row[x] & 0xff, blue = (row[x] >> 16) & 0xff;
+        if (red - blue < 0x60) continue;
+        if (left < 0) left = int(x);
+        right = int(x) + 1;
+    }
+}
+
+FrameLabStatus tryCreate(FrameLabD3D12FgConfig config)
+{
+    FrameLabD3D12Fg* fg{};
+    const auto status = framelab_d3d12_fg_create(&config, &fg);
+    if (fg) sdk(framelab_d3d12_fg_destroy(fg), "destroy probe backend");
+    return status;
+}
+
+// Descriptor sizes and render extents, checked against the real device before the run.
+void descriptorChecks(const FrameLabD3D12FgConfig& base)
+{
+    constexpr uint32_t align = alignof(FrameLabD3D12FgConfig);
+    constexpr uint32_t v1 = (uint32_t(offsetof(FrameLabD3D12FgConfig, render_extent)) + align - 1) / align * align;
+    auto config = base;
+    config.struct_size = v1;
+    // A v0.4.0 client passes the v1 size. The bytes after it are not part of its struct, so the
+    // invalid extent placed there must not be read.
+    config.render_extent = {1, 0};
+    sdk(tryCreate(config), "create with v0.4.0-size config");
+    std::printf("ABI_CHECK v1_size=%u created=1\n", v1);
+    for (uint32_t size = v1 - 1; size < sizeof config; ++size) {
+        if (size == v1) continue;
+        config.struct_size = size;
+        expect(tryCreate(config) == FRAMELAB_ABI_MISMATCH, "partial config size was not rejected");
+    }
+    std::puts("ABI_CHECK partial_sizes_rejected=1");
+    config = base;
+    const auto w = base.extent.width, h = base.extent.height;
+    for (const FrameLabExtent bad : {FrameLabExtent{w, 0}, FrameLabExtent{0, h},
+                                     FrameLabExtent{w + 1, h}, FrameLabExtent{w, h + 1}}) {
+        config.render_extent = bad;
+        expect(tryCreate(config) == FRAMELAB_INVALID_DIMENSIONS, "invalid render extent was not rejected");
+    }
+    std::puts("ABI_CHECK invalid_render_extents_rejected=1");
+}
+
+bool parseExtent(const wchar_t* text, FrameLabExtent& extent)
+{
+    wchar_t* end{};
+    const auto width = std::wcstoul(text, &end, 10);
+    if (end == text || *end != L'x') return false;
+    const auto* height = end + 1;
+    const auto value = std::wcstoul(height, &end, 10);
+    if (end == height || *end) return false;
+    extent = {uint32_t(width), uint32_t(value)};
+    return extent.width && extent.height && extent.width <= initialExtent.width &&
+        extent.height <= initialExtent.height;
+}
 struct Totals {
     unsigned rendered{}, evaluated{}, verified{}, unverifiedPresented{}, dropped{}, resets{}, segments{};
     unsigned expectedInterpolations{}, leasesCreated{}, leaseReleases{}, contractChecks{};
     bool historyContractVerified = false;
+    std::vector<double> sourceIntervals, sourceGpu;
 };
 
 bool parse(int argc, wchar_t** argv, Options& options)
@@ -573,9 +714,15 @@ bool parse(int argc, wchar_t** argv, Options& options)
         } else if (arg == L"--no-fg") options.noFg = true;
         else if (arg == L"--resize") options.resize = true;
         else if (arg == L"--reject-frame") options.reject = true;
-        else if (arg == L"--debug") options.debug = true;
+        else if (arg == L"--debug" || arg == L"--gpu-validation") {
+            options.debug = true;
+            options.gpuValidation |= arg == L"--gpu-validation";
+        }
         else if (arg == L"--timing") options.timing = true;
         else if (arg == L"--no-pacing") options.pace = false;
+        else if (arg == L"--render" && i + 1 < argc) {
+            if (!parseExtent(argv[++i], options.render)) return false;
+        }
         else if (arg == L"--frames" && i + 1 < argc) {
             options.frames = unsigned(std::wcstoul(argv[++i], nullptr, 10));
             framesGiven = true;
@@ -633,7 +780,11 @@ void writeSummary(const Options& options, const Gpu& gpu, const Presenter& prese
     std::fprintf(file, "  \"present_interval_ms\": {\n");
     stat("real_to_generated", in.realToGenerated, false);
     stat("generated_to_real", in.generatedToReal, false);
-    stat("real_to_real", in.realToReal, true);
+    stat("real_to_real", in.realToReal, false);
+    stat("source", totals.sourceIntervals, true);
+    std::fprintf(file, "  },\n  \"gpu_interval_ms\": {\n");
+    stat("source_submission", totals.sourceGpu, false);
+    stat("backbuffer_copy", in.copyGpu, true);
     std::fprintf(file, "  },\n");
     const bool stats = presenter.firstStatsValid && presenter.lastStatsValid;
     std::fprintf(file, "  \"frame_statistics\": {\"available\": %s, \"last_hr\": \"%#lx\", \"present_count\": %u, "
@@ -642,13 +793,18 @@ void writeSummary(const Options& options, const Gpu& gpu, const Presenter& prese
                  stats ? presenter.lastStats.PresentCount - presenter.firstStats.PresentCount : 0,
                  stats ? presenter.lastStats.PresentRefreshCount - presenter.firstStats.PresentRefreshCount : 0,
                  stats ? presenter.lastStats.SyncRefreshCount - presenter.firstStats.SyncRefreshCount : 0);
+    auto steady = gpu.memory.steady;
+    std::sort(steady.begin(), steady.end());
+    const uint64_t medianUsage = steady.empty() ? 0 : steady[steady.size() / 2];
     std::fprintf(file, "  \"memory_bytes\": {\"start\": %llu, \"warm\": %llu, \"end\": %llu, \"growth_after_warm\": "
-                 "%llu, \"peak_local\": %llu, \"budget\": %llu},\n",
+                 "%llu, \"peak_local\": %llu, \"steady_local\": %llu, \"budget\": %llu},\n",
                  static_cast<unsigned long long>(gpu.memory.start), static_cast<unsigned long long>(gpu.memory.warm),
                  static_cast<unsigned long long>(gpu.memory.end), static_cast<unsigned long long>(growth),
-                 static_cast<unsigned long long>(gpu.memory.peak), static_cast<unsigned long long>(gpu.memory.budget));
-    std::fprintf(file, "  \"validation\": {\"debug_layer\": %s, \"errors\": %u, \"warnings\": %u}\n}\n",
-                 options.debug ? "true" : "false", gpu.validation.errors, gpu.validation.warnings);
+                 static_cast<unsigned long long>(gpu.memory.peak), static_cast<unsigned long long>(medianUsage),
+                 static_cast<unsigned long long>(gpu.memory.budget == UINT64_MAX ? 0 : gpu.memory.budget));
+    std::fprintf(file, "  \"validation\": {\"debug_layer\": %s, \"gpu_based\": %s, \"errors\": %u, \"warnings\": %u}\n}\n",
+                 options.debug ? "true" : "false", options.gpuValidation ? "true" : "false",
+                 gpu.validation.errors, gpu.validation.warnings);
     expect(std::fclose(file) == 0, "write summary");
 }
 } // namespace
@@ -660,14 +816,13 @@ int wmain(int argc, wchar_t** argv)
         std::fprintf(stderr,
             "usage: d3d12_fg <NGX runtime directory> <output directory> <app-local proxy or ->\n"
             "       [--vsync | --no-vsync] [--no-fg] [--frames N] [--resize] [--reject-frame] [--cut-at N]\n"
-            "       [--debug] [--timing] [--no-pacing]\n"
+            "       [--debug | --gpu-validation] [--timing] [--no-pacing] [--render <width>x<height>]\n"
             "Without --vsync or --no-vsync the client runs the original six-frame readback check.\n");
         return 2;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const bool presenting = options.presenting;
     const bool fallbackOnly = options.noFg;
-    const unsigned frames = options.frames;
     try {
         const auto& runtime = options.runtime;
         const auto& logs = options.logs;
@@ -681,22 +836,31 @@ int wmain(int argc, wchar_t** argv)
             expect(LoadLibraryW(proxy.c_str()) != nullptr, "load configured app-local proxy");
         }
         Gpu gpu;
-        gpu.initialize(options.debug);
+        gpu.initialize(options.debug, options.gpuValidation);
+        if (options.timing) gpu.initializeTiming();
         Presenter presenter;
         if (presenting) presenter.initialize(gpu, options.vsync, options.pace);
         Totals totals;
-        const unsigned warmFrame = std::min(frames - 1, std::max(2u, frames / 4));
+        const unsigned warmFrame = std::min(options.frames - 1, std::max(2u, options.frames / 4));
         // The warm-up sample is taken in every segment, so growth is measured within the last segment.
         const auto sampleFrame = [&](unsigned i) {
             const auto usage = gpu.sampleMemory();
             if (i == warmFrame) gpu.memory.warm = usage;
+            if (i > warmFrame && usage) gpu.memory.steady.push_back(usage);
         };
-        const auto runFrames = [&](unsigned firstFrame) {
+        const auto runFrames = [&](unsigned firstFrame, unsigned frames, FrameLabExtent configuredRender, bool recreated) {
+            const bool checkingReadback = !presenting && !recreated;
+            const bool resizing = presenting && options.resize && !firstFrame;
             ++totals.segments;
             const auto extent = gpu.extent;
+            const auto render = configuredRender.width ?
+                FrameLabExtent{std::min(configuredRender.width, extent.width), std::min(configuredRender.height, extent.height)} :
+                extent;
             FrameLabD3D12FgConfig config{sizeof config, FRAMELAB_ABI_VERSION, 1, 1,
                 gpu.device.Get(), gpu.queue.Get(), gpu.fence.Get(), extent,
-                "31246941-7a24-484c-a4a7-e436c26c6f95", "phase2.1", runtime.c_str(), logs.c_str(), reportInit, nullptr};
+                "31246941-7a24-484c-a4a7-e436c26c6f95", "phase2.1", runtime.c_str(), logs.c_str(), reportInit, nullptr,
+                configuredRender.width ? render : FrameLabExtent{}};
+            if (checkingReadback) descriptorChecks(config);
             FrameLabD3D12Fg* raw{};
             if (!fallbackOnly) {
                 const auto status = framelab_d3d12_fg_create(&config, &raw);
@@ -732,23 +896,58 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
 
-            auto color = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM);
-            auto depth = gpu.texture(DXGI_FORMAT_R32_FLOAT);
-            auto motion = gpu.texture(DXGI_FORMAT_R16G16_FLOAT);
-            auto generated = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM);
-            unsigned releases = 0;
-            auto colorLease = pin(color, releases);
-            auto depthLease = pin(depth, releases);
-            auto motionLease = pin(motion, releases);
-            totals.leasesCreated += 3;
+            auto color = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM, extent);
+            Texture depth, motion, generated;
             const size_t count = size_t(extent.width) * extent.height;
-            std::vector<uint32_t> pixels(count), previous, output(count), clear(count, sentinel);
-            std::vector<float> depths(count);
-            std::vector<uint16_t> vectors(count * 2);
+            const size_t renderCount = size_t(render.width) * render.height;
+            std::vector<uint32_t> pixels(count), previous, output, clear;
+            std::vector<float> depths;
+            std::vector<uint16_t> vectors;
+            const auto abandonFg = [&] {
+                sdk(framelab_d3d12_fg_destroy(fg.release()), "destroy idle FG backend after allocation failure");
+                raw = nullptr;
+                depth = {};
+                motion = {};
+                generated = {};
+                std::puts("SDK_FG_FALLBACK allocation=out_of_memory");
+            };
+            if (raw) {
+                try {
+                    depth = gpu.texture(DXGI_FORMAT_R32_FLOAT, render);
+                    if (presenting && environment(L"FRAMELAB_D3D12_FAIL_FG_ALLOCATION"))
+                        throw GpuError(E_OUTOFMEMORY, "inject optional FG allocation failure");
+                    motion = gpu.texture(DXGI_FORMAT_R16G16_FLOAT, render);
+                    generated = gpu.texture(DXGI_FORMAT_R8G8B8A8_UNORM, extent);
+                    depths.resize(renderCount);
+                    vectors.resize(renderCount * 2);
+                    if (!options.timing) {
+                        previous.resize(count);
+                        output.resize(count);
+                        clear.assign(count, sentinel);
+                    }
+                } catch (const GpuError& error) {
+                    if (!presenting || error.result != E_OUTOFMEMORY) throw;
+                    abandonFg();
+                } catch (const std::bad_alloc&) {
+                    if (!presenting) throw;
+                    abandonFg();
+                }
+            }
+            unsigned releases = 0;
+            Lease colorLease(nullptr, &framelab_lease_destroy), depthLease(nullptr, &framelab_lease_destroy),
+                motionLease(nullptr, &framelab_lease_destroy);
+            const bool haveLeases = raw != nullptr;
+            if (haveLeases) {
+                colorLease = pin(color, releases);
+                depthLease = pin(depth, releases);
+                motionLease = pin(motion, releases);
+            }
+            totals.leasesCreated += raw ? 3 : 0;
             const auto view = camera(extent);
             const Scene scene(extent, presenting ? options.cutAt : -1);
             auto time = Clock::now();
             unsigned verified = 0, evaluated = 0, rendered = 0;
+            int maxEdgeError = 0;
             const auto realBefore = presenter.realPresents;
             const auto generatedBefore = presenter.generatedPresents;
             const bool injectRejection = presenting && options.reject;
@@ -760,14 +959,30 @@ int wmain(int argc, wchar_t** argv)
                 const auto now = Clock::now();
                 const unsigned left = scene.left(i);
                 const bool cut = presenting && scene.discontinuity(i);
+                const bool pendingResize = resizing && i + 1 == frames;
+                const double sourceSeconds = i ? std::chrono::duration<double>(now - time).count() : 1.0 / 60;
+                time = now;
+                if (i > warmFrame) totals.sourceIntervals.push_back(sourceSeconds * 1000);
                 for (unsigned y = 0; y < extent.height; ++y) {
                     for (unsigned x = 0; x < extent.width; ++x) {
                         const size_t p = y * extent.width + x;
                         const bool object = x >= left && x < left + 160 && y >= 240 && y < 480;
                         pixels[p] = object ? 0xff2080f0 : (((x / 32 + y / 32) % 2) ? 0xff303030 : 0xff181818);
-                        depths[p] = object ? 0.3f : 0.9f;
-                        vectors[2 * p] = DirectX::PackedVector::XMConvertFloatToHalf(object ? -32.0f / extent.width : 0);
-                        vectors[2 * p + 1] = 0;
+
+                    }
+                }
+                if (raw) {
+                    const auto uvMotion = DirectX::PackedVector::XMConvertFloatToHalf(-32.0f / extent.width);
+                    for (unsigned y = 0; y < render.height; ++y) {
+                        const auto oy = unsigned((y + 0.5) * extent.height / render.height);
+                        for (unsigned x = 0; x < render.width; ++x) {
+                            const auto ox = unsigned((x + 0.5) * extent.width / render.width);
+                            const bool object = ox >= left && ox < left + 160 && oy >= 240 && oy < 480;
+                            const size_t p = size_t(y) * render.width + x;
+                            depths[p] = object ? 0.3f : 0.9f;
+                            vectors[2 * p] = object ? uvMotion : 0;
+                            vectors[2 * p + 1] = 0;
+                        }
                     }
                 }
                 if (cut && raw) {
@@ -782,39 +997,66 @@ int wmain(int argc, wchar_t** argv)
                 const auto motionState = motion.state;
                 const auto generatedState = generated.state;
                 gpu.begin();
+                gpu.startTiming();
                 constexpr auto shader = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                const auto presentOrdinary = [&] {
+                    gpu.stopTiming();
+                    gpu.sampleMemory();
+                    gpu.enqueue(nullptr);
+                    gpu.wait();
+                    if (options.timing && i > warmFrame) totals.sourceGpu.push_back(gpu.elapsedGpuMs());
+                    presenter.present(gpu, color, firstFrame + i, Kind::real, i > warmFrame, pendingResize);
+                    sampleFrame(i);
+                };
+                const auto discardUploads = [&] {
+                    check(gpu.list->Close(), "discard unsubmitted FG list");
+                    color.state = colorState;
+                    depth.state = depthState;
+                    motion.state = motionState;
+                    generated.state = generatedState;
+                };
                 gpu.upload(color, pixels.data(), shader);
                 ++rendered;
                 if (!raw) {
-                    gpu.enqueue(nullptr);
-                    gpu.wait();
-                    presenter.present(gpu, color, firstFrame + i, Kind::real);
-                    sampleFrame(i);
+                    presentOrdinary();
                     continue;
                 }
-                gpu.upload(depth, depths.data(), shader);
-                gpu.upload(motion, vectors.data(), shader);
-                // The sentinel clear detects outputs that NGX did not write. The timing mode skips it.
-                if (!options.timing) gpu.upload(generated, clear.data(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                else gpu.transition(generated, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                try {
+                    gpu.upload(depth, depths.data(), shader);
+                    gpu.upload(motion, vectors.data(), shader);
+                    // The sentinel clear detects outputs that NGX did not write. The timing mode skips it.
+                    if (!options.timing) gpu.upload(generated, clear.data(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                    else gpu.transition(generated, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                } catch (const GpuError& error) {
+                    if (!presenting || error.result != E_OUTOFMEMORY) throw;
+                    discardUploads();
+                    abandonFg();
+                    depthLease.reset();
+                    motionLease.reset();
+                    gpu.begin();
+                    gpu.startTiming();
+                    gpu.upload(color, pixels.data(), shader);
+                    presentOrdinary();
+                    continue;
+                }
 
                 FrameLabFgFrame frame{};
                 frame.struct_size = sizeof frame;
                 frame.abi_version = FRAMELAB_ABI_VERSION;
                 frame.stream_id = frame.device_id = frame.generation = 1;
                 frame.frame_index = i;
-                frame.render_extent = frame.output_extent = extent;
-                frame.delta_seconds = i ? std::chrono::duration<double>(now - time).count() : 1.0 / 60;
-                time = now;
+                frame.render_extent = render;
+                frame.output_extent = extent;
+                frame.delta_seconds = sourceSeconds;
                 frame.reset_history = resetHistory ?
                     (i ? (pendingReset ? pendingReset : FRAMELAB_RESET_DISCONTINUITY) : FRAMELAB_RESET_INITIAL) : 0;
                 frame.camera = view;
                 frame.producer = {1, i + 1u, 0, 0, FRAMELAB_COMPLETION_SAME_COMMAND_STREAM, nullptr};
                 frame.color = {11, i, 1, extent, FRAMELAB_FORMAT_RGBA8_UNORM,
                                FRAMELAB_STATE_SHADER_READ, FRAMELAB_PROVENANCE_SYNTHETIC, colorLease.get()};
-                frame.depth = {12, i, 1, extent, FRAMELAB_FORMAT_R32_FLOAT,
+                frame.depth = {12, i, 1, render, FRAMELAB_FORMAT_R32_FLOAT,
                                FRAMELAB_STATE_SHADER_READ, FRAMELAB_PROVENANCE_SYNTHETIC, depthLease.get()};
-                frame.motion_vectors = {13, i, 1, extent, FRAMELAB_FORMAT_RG16_FLOAT,
+                frame.motion_vectors = {13, i, 1, render, FRAMELAB_FORMAT_RG16_FLOAT,
                                FRAMELAB_STATE_SHADER_READ, FRAMELAB_PROVENANCE_SYNTHETIC, motionLease.get()};
                 FrameLabD3D12FgBindings bindings{sizeof bindings, FRAMELAB_ABI_VERSION, i + 1u, gpu.list.Get(),
                     {11, color.resource.Get(), static_cast<uint32_t>(color.state)},
@@ -829,7 +1071,40 @@ int wmain(int argc, wchar_t** argv)
                     std::puts("ABI_CHECK invalid_native_state_rejected=1");
                     ++totals.contractChecks;
                 }
-                if (i == 2) {
+                if (checkingReadback && !i) {
+                    // Self-consistent metadata at a render extent the backend was not created with.
+                    auto other = frame;
+                    other.render_extent = render == extent ?
+                        FrameLabExtent{extent.width / 2, extent.height / 2} : extent;
+                    other.depth.extent = other.motion_vectors.extent = other.render_extent;
+                    expect(framelab_d3d12_fg_record(raw, &other, &bindings) == FRAMELAB_INVALID_DIMENSIONS,
+                           "frame at another render extent was not rejected");
+                    std::puts("ABI_CHECK render_extent_mismatch_rejected=1");
+
+                    // Correct metadata, identity, lease and state, but the native depth resource has
+                    // another size.
+                    unsigned wrongReleases = 0;
+                    auto wrongDepth = gpu.texture(DXGI_FORMAT_R32_FLOAT, {render.width, render.height + 1});
+                    std::vector<float> zeros(size_t(render.width) * (render.height + 1));
+                    gpu.upload(wrongDepth, zeros.data(), shader);
+                    auto wrongLease = pin(wrongDepth, wrongReleases);
+                    auto resized = frame;
+                    resized.depth.lease = wrongLease.get();
+                    auto resizedBindings = bindings;
+                    resizedBindings.depth = {12, wrongDepth.resource.Get(), static_cast<uint32_t>(wrongDepth.state)};
+                    expect(framelab_d3d12_fg_record(raw, &resized, &resizedBindings) == FRAMELAB_INVALID_RESOURCE_STATE,
+                           "native depth of another size was not rejected");
+                    std::puts("ABI_CHECK native_extent_mismatch_rejected=1");
+                    gpu.uploads.push_back(wrongDepth.resource);
+                }
+                if ((recreated || (presenting && firstFrame)) && !i) {
+                    auto unreset = frame;
+                    unreset.reset_history = 0;
+                    expect(framelab_d3d12_fg_record(raw, &unreset, &bindings) == FRAMELAB_RESET_REQUIRED,
+                           "recreated backend accepted a frame without a reset");
+                    std::puts(recreated ? "ABI_CHECK recreated_requires_reset=1" : "ABI_CHECK resize_requires_reset=1");
+                }
+                if (i == 2 && !recreated) {
                     auto stale = frame;
                     --stale.depth.frame_index;
                     expect(framelab_d3d12_fg_record(raw, &stale, &bindings) == FRAMELAB_INVALID_SEQUENCE,
@@ -852,23 +1127,17 @@ int wmain(int argc, wchar_t** argv)
                 if (presenting && result != FRAMELAB_OK) {
                     // A failed native evaluation can leave commands in this list. Submit a fresh
                     // upload for ordinary presentation, starting from the last committed states.
-                    check(gpu.list->Close(), "discard failed FG list");
+                    discardUploads();
                     if (result == FRAMELAB_NATIVE_FAILURE)
                         sdk(framelab_d3d12_fg_cancel(raw), "cancel failed FG packet");
-                    color.state = colorState;
-                    depth.state = depthState;
-                    motion.state = motionState;
-                    generated.state = generatedState;
                     gpu.begin();
+                    gpu.startTiming();
                     gpu.upload(color, pixels.data(), shader);
-                    gpu.enqueue(nullptr);
-                    gpu.wait();
-                    presenter.present(gpu, color, firstFrame + i, Kind::real);
+                    presentOrdinary();
                     std::printf("SDK_FG_FALLBACK source=%u record=%s\n", firstFrame + i, framelab_status_string(result));
                     ++dropped;
                     resetHistory = true;
                     pendingReset = 0;
-                    sampleFrame(i);
                     continue;
                 }
                 recorded(result, "record native FG evaluate");
@@ -882,12 +1151,14 @@ int wmain(int argc, wchar_t** argv)
                 ComPtr<ID3D12Resource> readback;
                 if (!options.timing) readback = gpu.readback(generated, layout);
                 Gate gate;
-                if (!presenting && i + 1 == frames) {
+                if ((checkingReadback && i + 1 == frames) || pendingResize) {
                     check(gpu.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate.fence)), "create test execution gate");
                     check(gpu.queue->Wait(gate.fence.Get(), 1), "block queue until retention is verified");
                 }
+                gpu.stopTiming();
+                gpu.sampleMemory();
                 gpu.enqueue(raw);
-                if (gate.fence) {
+                if (gate.fence && !presenting) {
                     colorLease.reset();
                     depthLease.reset();
                     motionLease.reset();
@@ -900,8 +1171,15 @@ int wmain(int argc, wchar_t** argv)
                     expect(framelab_d3d12_fg_destroy(raw) == FRAMELAB_BUSY, "pending backend was destructible");
                     check(gate.fence->Signal(1), "release test execution gate");
                     std::puts("ABI_CHECK early_retire_rejected=1 pending_destroy_rejected=1");
+                } else if (gate.fence) {
+                    expect(framelab_d3d12_fg_retire(raw) == FRAMELAB_NOT_READY && releases == 0,
+                           "resize released pending FG resources");
+                    expect(framelab_d3d12_fg_destroy(raw) == FRAMELAB_BUSY, "resize destroyed pending FG backend");
+                    std::puts("ABI_CHECK resize_fg_pending=1");
+                    check(gate.fence->Signal(1), "release FG resize gate");
                 }
                 gpu.wait();
+                if (options.timing && i > warmFrame) totals.sourceGpu.push_back(gpu.elapsedGpuMs());
                 sdk(framelab_d3d12_fg_retire(raw), "retire completed frame");
                 bool interpolated = false;
                 if (readback) {
@@ -915,19 +1193,31 @@ int wmain(int argc, wchar_t** argv)
                     bool written = true;
                     for (const auto pixel : output) written &= pixel != sentinel;
                     interpolated = expectInterpolation && written && output != pixels && output != previous;
-                    if (interpolated) ++verified;
+                    if (interpolated) {
+                        ++verified;
+                        if (!presenting) {
+                            int leftEdge, rightEdge;
+                            edges(output, leftEdge, rightEdge);
+                            const int expected = int(left) - 16;
+                            const int error = leftEdge < 0 ? int(extent.width) :
+                                std::max(std::abs(leftEdge - expected), std::abs(rightEdge - (expected + 160)));
+                            maxEdgeError = std::max(maxEdgeError, error);
+                            std::printf("SDK_FG_EDGES frame=%u left=%d right=%d expected_left=%d\n",
+                                        i, leftEdge, rightEdge, expected);
+                        }
+                    }
                 }
                 if (presenting) {
                     // In correctness modes the texture verified above is the source of the generated backbuffer
                     // copy. The timing mode presents evaluated output without reading it back.
-                    if (interpolated) presenter.present(gpu, generated, firstFrame + i, Kind::generated);
+                    if (interpolated) presenter.present(gpu, generated, firstFrame + i, Kind::generated, i > warmFrame);
                     else if (options.timing && expectInterpolation) {
-                        presenter.present(gpu, generated, firstFrame + i, Kind::generated);
+                        presenter.present(gpu, generated, firstFrame + i, Kind::generated, i > warmFrame);
                         ++unverifiedPresented;
                     }
-                    presenter.present(gpu, color, firstFrame + i, Kind::real);
+                    presenter.present(gpu, color, firstFrame + i, Kind::real, i > warmFrame, pendingResize);
                 }
-                previous = pixels;
+                if (!options.timing) previous = pixels;
                 sampleFrame(i);
                 if (!presenting || frames <= 32 || i % 60 == 0 || i + 1 == frames)
                     std::printf("SDK_FG_FRAME frame=%u fence=%llu ngx=%#x\n", firstFrame + i,
@@ -939,14 +1229,14 @@ int wmain(int argc, wchar_t** argv)
             totals.unverifiedPresented += unverifiedPresented;
             totals.dropped += dropped;
             totals.expectedInterpolations += expectedInterpolations;
+            // Destroy only after the last packet retired. Check the result, then drop caller leases.
+            if (presenting) gpu.drain();
+            if (fg) sdk(framelab_d3d12_fg_destroy(fg.release()), "destroy idle FG backend");
+            colorLease.reset();
+            depthLease.reset();
+            motionLease.reset();
+            totals.leaseReleases += releases;
             if (presenting) {
-                // Every packet was retired above. Destroy the idle backend explicitly so a BUSY result is not
-                // hidden by the deleter, then return the caller's leases.
-                if (fg) sdk(framelab_d3d12_fg_destroy(fg.release()), "destroy idle FG backend");
-                colorLease.reset();
-                depthLease.reset();
-                motionLease.reset();
-                totals.leaseReleases += releases;
                 gpu.validation.drain();
                 std::printf("DXGI_SUMMARY first_source=%u rendered=%u evaluated=%u verified=%u unverified_presented=%u "
                             "dropped=%u real_attempts=%u generated_attempts=%u real_presents=%u generated_presents=%u "
@@ -958,46 +1248,55 @@ int wmain(int argc, wchar_t** argv)
                 const bool complete = rendered == frames && presenter.realPresents - realBefore == rendered;
                 const bool fgComplete = !raw || (evaluated + dropped == rendered && shown == expectedInterpolations &&
                                                  presenter.generatedPresents - generatedBefore == shown);
-                const bool released = fallbackOnly || releases == 3;
-                return complete && fgComplete && released && (fallbackOnly || raw != nullptr) ? 0 : 1;
+                const bool released = releases == (haveLeases ? 3u : 0u);
+                return complete && fgComplete && released ? 0 : 1;
             }
-            writeReadback(logs / L"generated-5.rgba", output);
-            std::printf("SDK_FG_SUMMARY real_frames=%u verified=%u final_lease_releases=%u\n", frames, verified, releases);
+            if (recreated) {
+                std::printf("SDK_FG_RECREATED render=%ux%u real_frames=%u verified=%u final_lease_releases=%u max_edge_error=%d\n",
+                            render.width, render.height, frames, verified, releases, maxEdgeError);
+            } else {
+                writeReadback(logs / L"generated-5.rgba", output);
+                std::printf("SDK_FG_SUMMARY real_frames=%u verified=%u final_lease_releases=%u max_edge_error=%d\n",
+                            frames, verified, releases, maxEdgeError);
+            }
             return verified == frames - 1 && releases == 3 ? 0 : 1;
         };
-        int result = runFrames(0);
+        int result = runFrames(0, options.frames, options.render, false);
         if (presenting && !result && options.resize) {
             presenter.resize(gpu, resizedExtent);
-            result = runFrames(frames);
+            result = runFrames(options.frames, options.frames, options.render, false);
         }
         if (!presenting) {
+            const auto nextRender = !options.render.width || options.render == initialExtent ? resizedExtent : initialExtent;
+            if (!result) result = runFrames(readbackFrames, recreatedFrames, nextRender, true);
             gpu.validation.drain();
             return result || gpu.validation.errors || gpu.validation.warnings ? 1 : 0;
         }
         gpu.memory.end = gpu.sampleMemory();
         // Drain the final Present, release the swapchain and window before the device, and collect any
         // debug messages raised by that teardown.
-        check(gpu.queue->Signal(gpu.fence.Get(), ++gpu.signal), "signal final drain");
-        gpu.wait();
         presenter.teardown();
         std::puts("TEARDOWN final_present_drained=1 swapchain_released=1");
         gpu.validation.drain();
         // Extended runs must not keep growing after warm-up. 32 MiB allows for driver-side pooling noise.
         const uint64_t growth = gpu.memory.end > gpu.memory.warm ? gpu.memory.end - gpu.memory.warm : 0;
-        const bool stable = frames < 120 || gpu.memory.warm == 0 || growth <= (32ull << 20);
+        const bool stable = options.frames < 120 || (gpu.memory.warm != 0 && growth <= (32ull << 20));
         const bool clean = !gpu.validation.errors && !gpu.validation.warnings;
         const bool leases = totals.leaseReleases == totals.leasesCreated;
         std::printf("MEMORY start_mb=%.1f warm_mb=%.1f end_mb=%.1f peak_mb=%.1f budget_mb=%.1f growth_mb=%.1f\n",
                     gpu.memory.start / 1048576.0, gpu.memory.warm / 1048576.0, gpu.memory.end / 1048576.0,
-                    gpu.memory.peak / 1048576.0, gpu.memory.budget / 1048576.0, growth / 1048576.0);
+                    gpu.memory.peak / 1048576.0, (gpu.memory.budget == UINT64_MAX ? 0 : gpu.memory.budget) / 1048576.0, growth / 1048576.0);
         if (options.debug)
             std::printf("D3D12_VALIDATION errors=%u warnings=%u\n", gpu.validation.errors, gpu.validation.warnings);
         const bool pass = !result && stable && clean && leases &&
             (!options.resize || presenter.pendingResizeChecks == 1) &&
-            (options.cutAt < 0 || fallbackOnly || totals.historyContractVerified);
+            (options.cutAt < 0 || !totals.evaluated || totals.historyContractVerified);
         writeSummary(options, gpu, presenter, totals, pass);
         std::printf("FL15_RESULT %s\n", pass ? "pass" : "fail");
         return pass ? 0 : 1;
+    } catch (const GpuError& error) {
+        std::fprintf(stderr, "D3D12 public SDK test: %s: HRESULT 0x%08lx\n", error.what(), error.result);
+        return 1;
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "D3D12 public SDK test: %s\n", ex.what());
         return 1;
