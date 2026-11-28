@@ -1,6 +1,8 @@
 use framelab_sys::*;
+#[cfg(feature = "link")]
 use std::ffi::c_void;
 use std::mem::{align_of, offset_of, size_of};
+#[cfg(feature = "link")]
 use std::ptr;
 
 #[test]
@@ -23,11 +25,13 @@ fn layout_matches_compiled_c_header() {
     assert_eq!(native, rust);
 }
 
+#[cfg(feature = "link")]
 unsafe extern "C" fn on_release(user: *mut c_void) {
     // SAFETY: the test retains this counter until after the callback.
     unsafe { *user.cast::<u32>() += 1 };
 }
 
+#[cfg(feature = "link")]
 #[test]
 fn installed_library_retains_frame_lease_until_retirement() {
     let mut released: u32 = 0;

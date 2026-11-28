@@ -147,7 +147,7 @@ In [Coordination #4](https://github.com/5headsmartbtw/leonida-framelab/issues/4)
 | Path | Purpose |
 | --- | --- |
 | `include/framelab/`, `src/`, `fg/` | Public headers, SDK implementation and API-neutral frame contracts |
-| `bindings/rust/`, `tests/external-consumer/` | Rust FFI and installed C/C++ consumer checks |
+| `bindings/rust/`, `samples/rust_d3d12/`, `tests/external-consumer/` | Rust FFI, native Rust D3D12 SR/FG consumers and installed C/C++ consumer checks |
 | `tests/vulkan-handoff/`, `tests/` | Standalone queue validation, portable tests and GPU runners |
 | `sample/`, `samples/d3d12_fg/`, `experiments/d3d12/` | Vulkan reference, installed D3D12 FG client and older standalone D3D12 experiments |
 | `native/windows/`, `docs/`, `LICENSES/` | Experimental Windows layer, implementation/evidence guides and upstream license texts |
