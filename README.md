@@ -18,7 +18,7 @@ The project grew out of research for [Leonida](docs/integrations/leonida/README.
 | Rust FFI | Merged | Raw bindings with C layout and installed shared-library lifecycle checks. [#11](https://github.com/5headsmartbtw/leonida-framelab/pull/11) |
 | D3D12 FG | Merged | Optional Windows x64 component. Native Direct NGX, verified readback and fence retirement. [#19](https://github.com/5headsmartbtw/leonida-framelab/pull/19) |
 | D3D12 SR | Merged | Optional Windows x64 Direct NGX component with verified readback and real fence retirement. [D3D12SR](docs/sdk/D3D12_SR.md) · [#36](https://github.com/5headsmartbtw/leonida-framelab/pull/36) |
-| D3D12 generated-frame DXGI presentation | Planned for installed client | The [older standalone presenter](experiments/d3d12/README.md) verified real and generated Present. The installed client verified readback. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
+| D3D12 generated-frame DXGI presentation | Implemented in installed client | The [installed FG sample](samples/d3d12_fg) presents real and generated frames through an application-owned flip-model swapchain. [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) |
 | D3D12 SR + FG | Planned | Depends on FL-14 and the presentation work in FL-15. [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) |
 | Vulkan FG | Experimental · open draft | Legacy sample in main. Installed Direct NGX and readback verified in [#20](https://github.com/5headsmartbtw/leonida-framelab/pull/20). Release blocked by [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). |
 | Vulkan SR | Merged | Optional Windows x64 Streamline component. Verified readback, resize/reset and timeline retirement. [#22](https://github.com/5headsmartbtw/leonida-framelab/pull/22) |
@@ -127,7 +127,7 @@ Point the consumer's `CMAKE_PREFIX_PATH` at the install prefix and include `<fra
 
 ## Roadmap and external renderers
 
-- D3D12 next steps are [installed-client DXGI presentation (FL-15)](https://github.com/5headsmartbtw/leonida-framelab/issues/30) and [combined SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31).
+- The installed D3D12 FG client supports [DXGI presentation](docs/sdk/D3D12_FG.md#dxgi-presentation). [Combined SR + FG (FL-16)](https://github.com/5headsmartbtw/leonida-framelab/issues/31) is the next integration stage.
 - Vulkan priorities are [SyncVal root cause (FL-17)](https://github.com/5headsmartbtw/leonida-framelab/issues/32), review of queue and failure handling, and broader independent hardware validation. See the [roadmap](docs/ROADMAP.md) and [stabilization roadmap update #28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - The local AMD FidelityFX Cauldron checkpoint linked the installed SDK, loaded its DLL, checked the ABI and continued standard Sponza rendering. A later standalone signed Streamline probe initialized the runtime and queried DLSS requirements. Native Cauldron SR and FG evaluation remain in development. The public integration proposal is in [#28](https://github.com/5headsmartbtw/leonida-framelab/pull/28).
 - Leonida and VIctory remain optional downstream integrations. See the [read-only integration notes](docs/integrations/leonida/README.md) and [VIctory audit](docs/integrations/victory/README.md).

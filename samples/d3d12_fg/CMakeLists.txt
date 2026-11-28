@@ -4,7 +4,7 @@ find_package(FrameLab 0.4.0 EXACT CONFIG REQUIRED COMPONENTS D3D12FG)
 
 add_executable(d3d12_fg main.cpp)
 target_compile_features(d3d12_fg PRIVATE cxx_std_20)
-target_link_libraries(d3d12_fg PRIVATE FrameLab::FrameLab d3d12 dxgi)
+target_link_libraries(d3d12_fg PRIVATE FrameLab::FrameLab d3d12 dxgi user32)
 
 add_executable(d3d12_header_test header_test.c)
 target_compile_features(d3d12_header_test PRIVATE c_std_11)

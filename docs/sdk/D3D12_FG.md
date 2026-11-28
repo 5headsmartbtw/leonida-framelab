@@ -42,6 +42,17 @@ NGX receives the full render-sized depth and motion-vector subrects. Motion vect
 
 The field was appended without changing the ABI version. A client built against the v0.4.0 header passes that struct's size (104 bytes on x64). This library reads the original fields and uses `extent` as the render extent. Any `struct_size` between that size and `sizeof(FrameLabD3D12FgConfig)` returns `FRAMELAB_ABI_MISMATCH`. A v0.4.0 library reads the original fields even when given a larger descriptor and uses the output extent for all inputs. A different render extent requires this library.
 
+## DXGI presentation
+
+FrameLab returns the interpolated image in the caller's output texture. It does not create a swapchain, select a backbuffer, schedule frames or call Present. The [external sample](../../samples/d3d12_fg) shows one application-owned arrangement:
+
+- **Architecture.** The application presents Direct NGX output through its own flip-model swapchain (`DXGI_SWAP_EFFECT_FLIP_DISCARD`, two buffers). This is different from Streamline DLSS-G, whose proxy swapchain inserts and schedules generated frames itself inside Present ([Streamline DLSS-G guide](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md)). Do not combine the two for the same swapchain, or the same interval is generated twice. FrameLab's D3D12 FG path is Direct NGX only.
+- **Order.** Source frame N is rendered and evaluated against N-1. The application presents the generated N-1/N image, then real frame N. Each Present copies the chosen texture into the current backbuffer on the same direct queue, transitions it to `PRESENT`, and releases the backbuffer reference before Present and before any `ResizeBuffers`.
+- **Pacing and latency.** The midpoint becomes available after frame N has rendered. The sample then delays real frame N by the preceding CPU-side real-to-generated Present interval, capped at 250 ms. This approximates even submission spacing. `--no-pacing` disables that delay. Sync interval 1 requests display synchronization. At sync interval 0 the sample sets `DXGI_PRESENT_ALLOW_TEARING` when the feature query reports support. Queue waits and readback affect sample pacing. Display-event timing and measured end-to-end latency require separate evidence. [DXGI Present](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgiswapchain-present)
+- **UI.** Interpolate the scene without UI and compose the UI onto both the generated and the real image before Present. The synthetic scene has no UI plane.
+- **Lifetime.** The host keeps the allocator, upload and readback buffers, output texture and backbuffer alive until the fence of the work that used them completes. Before resizing, the host drains the queue (including the last Present), destroys the idle FrameLab backend, resizes the swapchain and creates a new backend at the new extent with a history reset. Drain the queue again before releasing the swapchain at shutdown: on the RTX 5090 with the D3D12 debug layer, releasing it with the final Present still queued terminated the process (exit code 2173) after all checks had passed.
+- **Fallback.** When FG initialization or an optional FG allocation fails, the sample presents the ordinary source. On recording failure it discards the list, cancels a natively failed packet, re-uploads the real frame and presents it. The next accepted frame carries a history reset. After `framelab_d3d12_fg_invalidate`, a frame without a reset flag is rejected with `FRAMELAB_RESET_REQUIRED`.
+
 ## Hardware evidence
 
 The [v0.4.0 regression comparison](RELEASE_NOTES.md#rtx-2050-regression-comparison) repeated the installed 720p FG readback and fence checks on the RTX 2050. Both revisions matched the historical readback hash and retired all three final leases. The separate ordinary-fallback verification passed with D3D12 debug-layer and GPU-based validation. The native FG readback run did not use those validation modes.
@@ -55,3 +66,16 @@ The last output matched the prior synthetic [D3D12 reference](../../experiments/
 This run covered image readback and fence lifetime. It skipped DXGI Present, D3D12 debug-layer validation, device-loss injection, cross-queue operation, stock-runtime compatibility and independent DLSS replication.
 
 Render extents were checked on an RTX 5090 (Windows 11 build 26300, driver 621.24, DLSS SDK v310.9.1 runtime) with [`tests/run_d3d12_fg_extent_checks.ps1`](../../tests/run_d3d12_fg_extent_checks.ps1) at equal extents, 960×540, 640×360, 1280×540 and 960×720. Every case produced five verified interpolations, retired all three final leases and passed the descriptor, rejection and recreation checks. On the middle row the generated rectangle sat within 4 pixels of the halfway position at every extent. The equal-extent readback matched, byte for byte, the unmodified v0.4.0 sample run with both the v0.4.0 library and this one. Compared with it, the render-extent readbacks differed in at most 0.18 % of pixels, by at most 12 of 255 per channel. That run also skipped DXGI Present and D3D12 debug-layer validation.
+
+DXGI presentation was measured on an RTX 5090: Windows 11 build 26300, driver 621.24, DLSS SDK v310.9.1 runtime, 3840×2160 display at 240 Hz. The run used `tests/run_d3d12_fg_present_checks.ps1 -PresentMon` with PresentMon 2.x ETW, not elevated, and all ten cases passed.
+
+- **Present mode.** The client's windowed 1280×720 flip-discard swapchain started in `Composed: Flip`. After about 100 presents (2.6–3.3 s), DWM promoted it to `Hardware Composed: Independent Flip`. In each 1800-frame run, with VSync on or off, that mode carried 3426–3427 of 3527 presents. The short FG cases (10–15 presents) stayed composed. The five-present no-FG case reached independent flip for its last two presents.
+- **Tearing.** With sync interval 0, PresentMon reported `AllowsTearing` only after the promotion.
+- **Dropped presents.** All dropped presents fell in the composed phase: 2–3 of 3527 per 1800-frame run.
+- **Intervals.** Display-change intervals followed the Present intervals:
+  - With VSync: p50 29.2 ms, p95 37.5 ms. Present-to-display time p50 was 2.9 ms.
+  - Without VSync: p50 27.7 ms, p95 37.7 ms. Present-to-display time p50 was 0.8 ms.
+
+  These intervals reflect the sample's per-Present GPU waits and readback, not production pacing. Physical scanout and end-to-end latency were not measured.
+
+See the [FL-15 maintainer review](https://github.com/5headsmartbtw/leonida-framelab/pull/44) for the integrated RTX 2050 gate. It records API Present counts separately from display-event evidence and distinguishes the stock and experimental runtime profiles.

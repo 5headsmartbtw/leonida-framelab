@@ -19,7 +19,7 @@ Leonida and VIctory integration proposals are optional consumers. Neither is a r
 
 ## v0.4.0 experimental scope
 
-The [release notes](RELEASE_NOTES.md) record the portable core and independent Windows x64 D3D12FG, D3D12SR and VulkanSR profiles. Installed Vulkan FG and combined Vulkan SR → FG remain held by the open extended SyncVal gate in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). Installed D3D12 generated-frame presentation and combined operation remain under FL-15 and FL-16. The scope is source-only.
+The [release notes](RELEASE_NOTES.md) record the portable core and independent Windows x64 D3D12FG, D3D12SR and VulkanSR profiles. Installed Vulkan FG and combined Vulkan SR → FG remain held by the open extended SyncVal gate in [#24](https://github.com/5headsmartbtw/leonida-framelab/issues/24). Main includes the installed D3D12 FG [DXGI presentation sample](D3D12_FG.md#dxgi-presentation). Combined operation remains under FL-16. The release scope is source-only.
 
 ## GPU compatibility and memory
 

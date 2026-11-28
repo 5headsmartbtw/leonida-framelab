@@ -34,6 +34,7 @@ Use the [experimental release checklist](sdk/RELEASE_CHECKLIST.md) when deciding
 - [x] API-neutral FrameInputs, typed bindings, real allocation leases and continuity checks.
 - [x] Read-only Leonida pipeline audit; no backend modifications or invented game inputs.
 - [x] Phase 3 image comparison, metadata rejection/recovery and validation evidence.
+- [x] Installed D3D12 FG presentation with VSync, resize, fallback and fence retirement in [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30).
 
 ## Next milestones
 
@@ -51,6 +52,5 @@ Tracking issues: [runtime paths](https://github.com/5headsmartbtw/leonida-framel
 
 ## Next SDK development stage
 
-1. **D3D12 Frame Generation presentation.** [FL-15](https://github.com/5headsmartbtw/leonida-framelab/issues/30) verifies DXGI presentation from the installed FG client, including VSync, resize, fallback and fence retirement. JoeY54 owns this task.
-2. **D3D12 SR → FG.** [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) follows FL-14 and FL-15. Use the real SR output as FG color. Pin its lifetime through FG completion. Validate depth and motion-vector scaling, camera/jitter conventions, command-list ordering, fences, resize and fallback. Keep each component independently usable.
-3. **FidelityFX Cauldron consumer.** Use the [AMD FidelityFX SDK v1 Cauldron framework](https://gpuopen.com/fidelityfx-cauldron-framework/) as an independent D3D12 host. Add an optional render module after scene motion/depth production and before presentation, using the host's resources and completion fences. Pin and review the chosen upstream revision and licenses before adding dependencies. Keep Cauldron and NVIDIA runtime downloads outside the portable FrameLab build.
+1. **D3D12 SR → FG.** [FL-16](https://github.com/5headsmartbtw/leonida-framelab/issues/31) follows FL-14 and FL-15. Use the real SR output as FG color. Pin its lifetime through FG completion. Validate depth and motion-vector scaling, camera/jitter conventions, command-list ordering, fences, resize and fallback. Keep each component independently usable.
+2. **FidelityFX Cauldron consumer.** Use the [AMD FidelityFX SDK v1 Cauldron framework](https://gpuopen.com/fidelityfx-cauldron-framework/) as an independent D3D12 host. Add an optional render module after scene motion/depth production and before presentation, using the host's resources and completion fences. Pin and review the chosen upstream revision and licenses before adding dependencies. Keep Cauldron and NVIDIA runtime downloads outside the portable FrameLab build.
